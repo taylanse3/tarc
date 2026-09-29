@@ -603,7 +603,7 @@ module tb_core;
     endtask
 
     task automatic test_fp_vec_disabled();
-        $display("Test 12 -- FP/vector disabled exceptions:");
+        $display("Test 12 -- FP/vector disabled exceptions, and FP/vector-enabled traps as not implemented:");
         begin_test();
         emit_init(0);
         emit_fault(r_type(OPC_FOP, ZERO, 3'b000, ZERO, ZERO, 8'h01), CAUSE_FP_DISABLED, TS_S);
@@ -611,17 +611,17 @@ module tb_core;
         emit_fault(r_type(OPC_VIOP, 5'd1, 3'b000, 5'd2, 5'd3, 8'h01), CAUSE_VEC_DISABLED, TS_S);
         emit_fault(i_type(OPC_VCFG, A0, 3'b000, A1, 13'd0), CAUSE_VEC_DISABLED, TS_S);
         emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
-        emit(r_type(OPC_FOP, ZERO, 3'b000, ZERO, ZERO, 8'h01));
+        emit_fault(r_type(OPC_FOP, ZERO, 3'b000, ZERO, ZERO, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h0C);
         emit(addi(T0, ZERO, 13'd32));
         emit(csrrs(ZERO, CSR_TSTATUS, T0));
-        emit(r_type(OPC_VIOP, 5'd1, 3'b000, 5'd2, 5'd3, 8'h01));
+        emit_fault(r_type(OPC_VIOP, 5'd1, 3'b000, 5'd2, 5'd3, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h2C);
         emit(csrrs(S3, CSR_TSTATUS, ZERO));
         emit(addi(S4, ZERO, 13'h55));
         emit_halt();
         load_exc_handler();
-        run(1000);
+        run(1200);
         check("FS=Clean, VS=Clean, PP=S", gpr(24), 64'h2C);
-        check("no trap once enabled (marker)", gpr(25), 64'h55);
+        check("marker reached after FP/vector traps as illegal", gpr(25), 64'h55);
         check_trap_log();
     endtask
 

@@ -266,10 +266,8 @@ module decode (
                         hz_reads_rs2 = 1'b1;
                         id_ex.fu = FU_FPU;
                         id_ex.rd_rf = RF_FP;
-                        if (fs_off) begin
-                            illegal = 1'b1;
-                            illegal_cause = CAUSE_FP_DISABLED;
-                        end
+                        illegal = 1'b1;
+                        illegal_cause = fs_off ? CAUSE_FP_DISABLED : CAUSE_ILLEGAL_INSTR;
                     end
 
                     OPC_VCFG, OPC_VIOP, OPC_VMUL, OPC_VFOP, OPC_VFMACC, OPC_VCMP,
@@ -279,10 +277,8 @@ module decode (
                         hz_reads_rs2 = 1'b1;
                         id_ex.fu = FU_VEC;
                         id_ex.rd_rf = RF_VEC;
-                        if (vs_off) begin
-                            illegal = 1'b1;
-                            illegal_cause = CAUSE_VEC_DISABLED;
-                        end
+                        illegal = 1'b1;
+                        illegal_cause = vs_off ? CAUSE_VEC_DISABLED : CAUSE_ILLEGAL_INSTR;
                     end
 
                     OPC_FENCE: begin
@@ -293,7 +289,11 @@ module decode (
                         end
                     end
 
-                    OPC_AMO, OPC_TLBINV: begin
+                    OPC_AMO: begin
+                        illegal = 1'b1;
+                    end
+
+                    OPC_TLBINV: begin
                         id_ex.fu = FU_NONE;
                         id_ex.rd_rf = RF_NONE;
                     end
