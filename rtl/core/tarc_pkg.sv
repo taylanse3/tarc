@@ -230,6 +230,7 @@ package tarc_pkg;
         logic reads_rs1, reads_rs2;
         xlen_t imm;
         alu_op_e alu_op;
+        muldiv_funct3_e muldiv_kind;
         logic is_branch;
         branch_funct3_e branch_kind;
         logic pred_taken;

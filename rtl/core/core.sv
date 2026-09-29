@@ -223,16 +223,36 @@ module core #(
         end
     end
 
+    logic muldiv_valid, muldiv_busy;
+    greg_t muldiv_rd, muldiv_pending_rd;
+    xlen_t muldiv_result;
     logic fp_we, vecrf_we;
     logic [4:0] fp_waddr, vecrf_waddr;
     xlen_t fp_wdata, vecrf_wdata;
     logic muldiv_grant, fpu_grant, vec_grant;
 
+    muldiv u_muldiv (
+        .clk(clk),
+        .rst_n(rst_n),
+        .id_ex(id_ex_q),
+        .rs1_fwd_data(ex_rs1_fwd),
+        .rs2_fwd_data(ex_rs2_fwd),
+        .rs1_use_fwd(ex_rs1_use_fwd),
+        .rs2_use_fwd(ex_rs2_use_fwd),
+        .trap_flush(trap_flush),
+        .muldiv_grant(muldiv_grant),
+        .muldiv_valid(muldiv_valid),
+        .muldiv_rd(muldiv_rd),
+        .muldiv_result(muldiv_result),
+        .muldiv_busy(muldiv_busy),
+        .muldiv_pending_rd(muldiv_pending_rd)
+    );
+
     writeback u_writeback (
         .mem_wb(mem_wb_q),
-        .muldiv_valid(1'b0),
-        .muldiv_rd('0),
-        .muldiv_result('0),
+        .muldiv_valid(muldiv_valid),
+        .muldiv_rd(muldiv_rd),
+        .muldiv_result(muldiv_result),
         .muldiv_grant(muldiv_grant),
         .fpu_valid(1'b0),
         .fpu_rd_rf(RF_NONE),
@@ -274,9 +294,9 @@ module core #(
         .wb_rd_rf(mem_wb_q.rd_rf),
         .wb_rd(mem_wb_q.rd),
         .wb_result(mem_wb_q.result),
-        .muldiv_valid(1'b0),
-        .muldiv_rd('0),
-        .muldiv_result('0),
+        .muldiv_valid(muldiv_valid),
+        .muldiv_rd(muldiv_rd),
+        .muldiv_result(muldiv_result),
         .d_valid(if_id.valid),
         .d_rs1(rs1_addr),
         .d_rs2(rs2_addr),
@@ -284,8 +304,8 @@ module core #(
         .d_reads_rs2(d_reads_rs2),
         .d_fu(d_fu),
         .d_is_csr_write(d_is_csr_write),
-        .muldiv_busy(1'b0),
-        .muldiv_pending_rd('0),
+        .muldiv_busy(muldiv_busy),
+        .muldiv_pending_rd(muldiv_pending_rd),
         .fpu_busy(1'b0),
         .vec_busy(1'b0),
         .csr_drain_active(

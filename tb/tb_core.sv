@@ -171,6 +171,46 @@ module tb_core;
         return r_type(OPC_OP, rd, 3'b001, rs1, rs2, 8'h00);
     endfunction
 
+    function automatic instr_t slli(logic [4:0] rd, logic [4:0] rs1, logic [5:0] shamt);
+        return i_type(OPC_OP_IMM, rd, 3'b001, rs1, 13'(shamt));
+    endfunction
+
+    function automatic instr_t muldiv_op(logic [2:0] f3, logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return r_type(OPC_OP_M, rd, f3, rs1, rs2, 8'h00);
+    endfunction
+
+    function automatic instr_t mul(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_MUL, rd, rs1, rs2);
+    endfunction
+
+    function automatic instr_t mulh(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_MULH, rd, rs1, rs2);
+    endfunction
+
+    function automatic instr_t mulhsu(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_MULHSU, rd, rs1, rs2);
+    endfunction
+
+    function automatic instr_t mulhu(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_MULHU, rd, rs1, rs2);
+    endfunction
+
+    function automatic instr_t div(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_DIV, rd, rs1, rs2);
+    endfunction
+
+    function automatic instr_t divu(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_DIVU, rd, rs1, rs2);
+    endfunction
+
+    function automatic instr_t rem_(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_REM, rd, rs1, rs2);
+    endfunction
+
+    function automatic instr_t remu(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return muldiv_op(F3_REMU, rd, rs1, rs2);
+    endfunction
+
     function automatic instr_t lui(logic [4:0] rd, logic [20:0] imm);
         return u_type(OPC_LUI, rd, imm);
     endfunction
@@ -722,6 +762,115 @@ module tb_core;
         check("branch target executed (s2)", gpr(23), 64'd3);
     endtask
 
+    task automatic test_muldiv_basic();
+        $display("Test 19 -- multiply/divide correctness:");
+        begin_test();
+        emit(addi(T0, ZERO, 13'd6));
+        emit(addi(T1, ZERO, 13'd7));
+        emit(addi(T2, ZERO, -3));
+        emit(addi(T3, ZERO, 13'd5));
+        emit(addi(T4, ZERO, 13'd1));
+        emit(slli(T4, T4, 6'd40));
+        emit(addi(T5, ZERO, 13'd1));
+        emit(slli(T5, T5, 6'd63));
+        emit(addi(T6, ZERO, -1));
+        emit(mul(A0, T0, T1));
+        emit(mul(A1, T2, T3));
+        emit(mulh(A2, T4, T4));
+        emit(mulhu(A3, T4, T4));
+        emit(mulhsu(A4, T5, T1));
+        emit(div(A5, T0, T1));
+        emit(divu(A6, T0, T1));
+        emit(rem_(A7, T0, T1));
+        emit(remu(S1, T0, T1));
+        emit(div(S2, T0, ZERO));
+        emit(divu(S3, T0, ZERO));
+        emit(rem_(S4, T0, ZERO));
+        emit(remu(S5, T0, ZERO));
+        emit(div(S6, T5, T6));
+        emit(rem_(S7, T5, T6));
+        emit_halt();
+        run(300);
+        check("mul 6*7=42", gpr(6), 64'd42);
+        check("mul (-3)*5=-15", gpr(7), -64'd15);
+        check("mulh (1<<40)*(1<<40) high", gpr(8), 64'h10000);
+        check("mulhu (1<<40)*(1<<40) high", gpr(9), 64'h10000);
+        check("mulhsu MOST_NEG*7 high", gpr(10), -64'd4);
+        check("div 6/7=0", gpr(11), 64'd0);
+        check("divu 6/7=0", gpr(12), 64'd0);
+        check("rem 6%7=6", gpr(13), 64'd6);
+        check("remu 6%7=6", gpr(22), 64'd6);
+        check("div by zero = -1", gpr(23), -64'd1);
+        check("divu by zero = all-ones", gpr(24), 64'hFFFF_FFFF_FFFF_FFFF);
+        check("rem by zero = dividend", gpr(25), 64'd6);
+        check("remu by zero = dividend", gpr(26), 64'd6);
+        check("div overflow MOST_NEG/-1 = MOST_NEG", gpr(27), 64'h8000_0000_0000_0000);
+        check("rem overflow MOST_NEG%-1 = 0", gpr(28), 64'd0);
+    endtask
+
+    task automatic test_muldiv_scoreboard();
+        $display("Test 20 -- scoreboard stall on a pending muldiv result:");
+        begin_test();
+        emit(addi(T0, ZERO, 13'd6));
+        emit(addi(T1, ZERO, 13'd7));
+        emit(mul(A0, T0, T1));
+        emit(addi(A1, A0, 13'd1));
+        emit_halt();
+        run(100);
+        check("mul result ready", gpr(6), 64'd42);
+        check("dependent addi used forwarded mul result", gpr(7), 64'd43);
+    endtask
+
+    task automatic test_muldiv_structural();
+        $display("Test 21 -- back-to-back independent multiplies (structural hazard):");
+        begin_test();
+        emit(addi(T0, ZERO, 13'd3));
+        emit(addi(T1, ZERO, 13'd4));
+        emit(addi(T2, ZERO, 13'd5));
+        emit(mul(A0, T0, T1));
+        emit(mul(A1, T1, T2));
+        emit(mul(A2, T2, T0));
+        emit_halt();
+        run(150);
+        check("first back-to-back mul 3*4=12", gpr(6), 64'd12);
+        check("second back-to-back mul 4*5=20", gpr(7), 64'd20);
+        check("third back-to-back mul 5*3=15", gpr(8), 64'd15);
+    endtask
+
+    task automatic test_muldiv_overlap();
+        $display("Test 22 -- independent scalar ops overlap a long divide:");
+        begin_test();
+        emit(addi(T0, ZERO, 13'd20));
+        emit(addi(T1, ZERO, 13'd3));
+        emit(div(A0, T0, T1));
+        emit(addi(A1, ZERO, 13'd1));
+        emit(addi(A2, ZERO, 13'd2));
+        emit(addi(A3, ZERO, 13'd3));
+        emit(addi(A4, ZERO, 13'd4));
+        emit_halt();
+        run(15);
+        check("independent addi 1 retired early", gpr(7), 64'd1);
+        check("independent addi 2 retired early", gpr(8), 64'd2);
+        check("independent addi 3 retired early", gpr(9), 64'd3);
+        check("independent addi 4 retired early", gpr(10), 64'd4);
+        check("divide not yet complete", gpr(6), 64'd0);
+        repeat (15) @(posedge clk);
+        check("divide eventually completes (20/3=6)", gpr(6), 64'd6);
+    endtask
+
+    task automatic test_muldiv_arbitration();
+        $display("Test 23 -- writeback arbitration between main pipeline and muldiv:");
+        begin_test();
+        emit(addi(T0, ZERO, 13'd6));
+        emit(addi(T1, ZERO, 13'd7));
+        emit(mul(A0, T0, T1));
+        emit(addi(A1, ZERO, 13'd99));
+        emit_halt();
+        run(60);
+        check("muldiv result survives arbitration", gpr(6), 64'd42);
+        check("colliding main-pipeline write survives arbitration", gpr(7), 64'd99);
+    endtask
+
     initial begin
         for (int i = 0; i < 1024; i++) begin
             imem[i] = i_type(OPC_OP_IMM, 5'd0, 3'b000, 5'd0, 13'd0);
@@ -811,6 +960,11 @@ module tb_core;
         test_wfi();
         test_wfi_fault();
         test_slow_memory();
+        test_muldiv_basic();
+        test_muldiv_scoreboard();
+        test_muldiv_structural();
+        test_muldiv_overlap();
+        test_muldiv_arbitration();
 
         $display("================================================");
         if (errors == 0) begin

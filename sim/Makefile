@@ -6,6 +6,7 @@ RTL = ../rtl/core/tarc_pkg.sv \
       ../rtl/core/regfile_int.sv \
       ../rtl/core/csr.sv \
       ../rtl/core/decode.sv \
+      ../rtl/core/muldiv.sv \
       ../rtl/core/execute.sv \
       ../rtl/core/memory.sv \
       ../rtl/core/writeback.sv \

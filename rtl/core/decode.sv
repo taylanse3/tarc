@@ -256,7 +256,8 @@ module decode (
                         hz_reads_rs1 = 1'b1;
                         hz_reads_rs2 = 1'b1;
                         id_ex.fu = FU_MULDIV;
-                        id_ex.rd_rf = RF_INT;
+                        id_ex.rd_rf = RF_NONE;
+                        id_ex.muldiv_kind = muldiv_funct3_e'(funct3);
                     end
 
                     OPC_FMADD, OPC_FOP, OPC_FCMP, OPC_FCVT, OPC_FLOAD, OPC_FSTORE,
