@@ -124,6 +124,9 @@ module decode (
                             F3_OR: id_ex.alu_op = ALU_OR;
                             F3_AND: id_ex.alu_op = ALU_AND;
                         endcase
+                        if (rem != 8'b0 && funct3 != F3_ADDSUB && funct3 != F3_SRLSRA) begin
+                            illegal = 1'b1;
+                        end
                     end
 
                     OPC_OP_IMM: begin
