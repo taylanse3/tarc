@@ -39,13 +39,16 @@ module csr #(
     logic ie_q, pie_q, pp_q;
     logic [1:0] fs_q, vs_q;
     logic [2:0] tie_q;
+    logic [2:0] tip_sw_q;
     xlen_t tvec_q, tscratch_q, tepc_q, tcause_q, tval_q, satp_q;
     logic [2:0] frm_q;
     logic [4:0] fflags_q;
     logic [$clog2(VLEN)-1:0] vstart_q;
 
+    logic [2:0] tip_hw_bits;
     logic [2:0] tip_bits;
-    assign tip_bits = {irq_external, irq_timer, irq_software};
+    assign tip_hw_bits = {irq_external, irq_timer, irq_software};
+    assign tip_bits = tip_hw_bits | tip_sw_q;
 
     xlen_t tstatus_val;
     assign tstatus_val = {57'b0, vs_q, fs_q, pp_q, pie_q, ie_q};
@@ -115,6 +118,16 @@ module csr #(
         endcase
     end
 
+    xlen_t tip_new_val;
+    always_comb begin
+        unique case (access_op)
+            F3_CSRRW, F3_CSRRWI: tip_new_val = access_wdata;
+            F3_CSRRS, F3_CSRRSI: tip_new_val = {61'b0, tip_sw_q} | access_wdata;
+            F3_CSRRC, F3_CSRRCI: tip_new_val = {61'b0, tip_sw_q} & ~access_wdata;
+            default: tip_new_val = {61'b0, tip_sw_q};
+        endcase
+    end
+
     logic priv_violation;
     assign priv_violation = !priv_s_q && !csr_user_ok;
 
@@ -134,6 +147,7 @@ module csr #(
             fs_q <= 2'b00;
             vs_q <= 2'b00;
             tie_q <= 3'b000;
+            tip_sw_q <= 3'b000;
             tvec_q <= '0;
             tscratch_q <= '0;
             tepc_q <= '0;
@@ -168,6 +182,7 @@ module csr #(
                     end
                 end
                 CSR_TIE: tie_q <= new_val[2:0];
+                CSR_TIP: tip_sw_q <= tip_new_val[2:0];
                 CSR_TVEC: tvec_q <= {new_val[63:2], 2'b00};
                 CSR_TSCRATCH: tscratch_q <= new_val;
                 CSR_TEPC: tepc_q <= new_val;
