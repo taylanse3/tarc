@@ -15,6 +15,7 @@ module muldiv #(
     input logic rs2_use_fwd,
 
     input logic trap_flush,
+    input logic mem_stall,
     input logic muldiv_grant,
 
     output logic muldiv_valid,
@@ -34,7 +35,8 @@ module muldiv #(
 
     logic busy_q;
     logic dispatch;
-    assign dispatch = id_ex.valid && (id_ex.fu == FU_MULDIV) && !busy_q && !trap_flush;
+    assign dispatch = id_ex.valid && (id_ex.fu == FU_MULDIV) && !busy_q
+        && !trap_flush && !mem_stall;
 
     greg_t rd_q;
     muldiv_funct3_e kind_q;

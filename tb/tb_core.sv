@@ -8,23 +8,25 @@ module tb_core;
     always #5 clk = ~clk;
 
     logic imem_req;
-    xlen_t imem_addr;
-    instr_t imem_rdata;
+    xlen_t imem_addr, imem_rdata;
     logic imem_ready;
 
     logic dmem_req, dmem_we;
     xlen_t dmem_addr, dmem_wdata, dmem_rdata;
-    logic [1:0] dmem_size;
+    logic [7:0] dmem_wstrb;
     logic dmem_ready;
 
     logic [2:0] irq_set = 3'b000;
     logic [2:0] irq_level = 3'b000;
     logic [2:0] irq_clear;
     logic slow_mem = 1'b0;
-    logic dmem_wait_q = 1'b0;
+    logic [1:0] imem_wait_q = 2'd0;
+    logic [1:0] dmem_wait_q = 2'd0;
+    xlen_t dev_flag = '0;
 
     localparam logic [63:0] RESET_PC = 64'h0000_0000_0000_0000;
     localparam logic [63:0] ACK_ADDR = 64'h0000_0000_1000_0000;
+    localparam logic [63:0] FLAG_ADDR = 64'h0000_0000_1000_0008;
     localparam logic [63:0] IRQ_BIT = 64'h8000_0000_0000_0000;
     localparam logic [63:0] EPC_DEFAULT = 64'hFFFF_FFFF_FFFF_FFFF;
     localparam logic [63:0] TS_U = 64'h0;
@@ -45,7 +47,7 @@ module tb_core;
         .dmem_we(dmem_we),
         .dmem_addr(dmem_addr),
         .dmem_wdata(dmem_wdata),
-        .dmem_size(dmem_size),
+        .dmem_wstrb(dmem_wstrb),
         .dmem_rdata(dmem_rdata),
         .dmem_ready(dmem_ready),
         .irq_software(irq_level[0]),
@@ -53,20 +55,57 @@ module tb_core;
         .irq_external(irq_level[2])
     );
 
-    instr_t imem [0:1023];
-    xlen_t dmem [0:1023];
+    instr_t imem [0:4095];
+    xlen_t dmem [0:2047];
 
-    assign imem_rdata = imem[imem_addr[11:2]];
-    assign imem_ready = 1'b1;
-    assign dmem_rdata = dmem[dmem_addr[12:3]];
+    assign imem_rdata = {imem[{imem_addr[13:3], 1'b1}], imem[{imem_addr[13:3], 1'b0}]};
+    assign dmem_rdata = (dmem_addr == FLAG_ADDR) ? dev_flag : dmem[dmem_addr[13:3]];
+
+    assign imem_ready = !slow_mem || (imem_wait_q == 2'd2);
+    assign dmem_ready = !slow_mem || (dmem_wait_q == 2'd2);
 
     always_ff @(posedge clk) begin
-        dmem_wait_q <= slow_mem && dmem_req && !dmem_we && !dmem_wait_q;
+        if (!imem_req || imem_ready) begin
+            imem_wait_q <= 2'd0;
+        end else begin
+            imem_wait_q <= imem_wait_q + 2'd1;
+        end
+        if (!dmem_req || dmem_ready) begin
+            dmem_wait_q <= 2'd0;
+        end else begin
+            dmem_wait_q <= dmem_wait_q + 2'd1;
+        end
     end
 
-    assign dmem_ready = !(slow_mem && dmem_req && !dmem_we) || dmem_wait_q;
+    int imem_beats;
+    int dmem_beats;
+    int dmem_writes;
+    int muldiv_dispatches;
 
-    assign irq_clear = (dmem_req && dmem_we && dmem_addr == ACK_ADDR) ? dmem_wdata[2:0] : 3'b000;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            imem_beats <= 0;
+            dmem_beats <= 0;
+            dmem_writes <= 0;
+            muldiv_dispatches <= 0;
+        end else begin
+            if (dut.u_muldiv.dispatch) begin
+                muldiv_dispatches <= muldiv_dispatches + 1;
+            end
+            if (imem_req && imem_ready) begin
+                imem_beats <= imem_beats + 1;
+            end
+            if (dmem_req && dmem_ready && dmem_we) begin
+                dmem_writes <= dmem_writes + 1;
+            end
+            if (dmem_req && dmem_ready && !dmem_we) begin
+                dmem_beats <= dmem_beats + 1;
+            end
+        end
+    end
+
+    assign irq_clear = (dmem_req && dmem_we && dmem_ready && dmem_addr == ACK_ADDR)
+        ? dmem_wdata[2:0] : 3'b000;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
@@ -77,8 +116,12 @@ module tb_core;
     end
 
     always_ff @(posedge clk) begin
-        if (dmem_req && dmem_we && dmem_addr != ACK_ADDR) begin
-            dmem[dmem_addr[12:3]] <= dmem_wdata;
+        if (dmem_req && dmem_we && dmem_ready && dmem_addr != ACK_ADDR) begin
+            for (int i = 0; i < 8; i++) begin
+                if (dmem_wstrb[i]) begin
+                    dmem[dmem_addr[13:3]][8*i +: 8] <= dmem_wdata[8*i +: 8];
+                end
+            end
         end
     end
 
@@ -163,6 +206,10 @@ module tb_core;
         return i_type(OPC_OP_IMM, rd, 3'b000, rs1, imm);
     endfunction
 
+    function automatic instr_t add_(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+        return r_type(OPC_OP, rd, 3'b000, rs1, rs2, 8'h00);
+    endfunction
+
     function automatic instr_t nop();
         return addi(ZERO, ZERO, 13'd0);
     endfunction
@@ -215,6 +262,22 @@ module tb_core;
         return u_type(OPC_LUI, rd, imm);
     endfunction
 
+    function automatic instr_t lb(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
+        return i_type(OPC_LOAD, rd, 3'b000, rs1, imm);
+    endfunction
+
+    function automatic instr_t lbu(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
+        return i_type(OPC_LOAD, rd, 3'b100, rs1, imm);
+    endfunction
+
+    function automatic instr_t lhu(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
+        return i_type(OPC_LOAD, rd, 3'b101, rs1, imm);
+    endfunction
+
+    function automatic instr_t lwu(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
+        return i_type(OPC_LOAD, rd, 3'b110, rs1, imm);
+    endfunction
+
     function automatic instr_t ld(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
         return i_type(OPC_LOAD, rd, 3'b011, rs1, imm);
     endfunction
@@ -225,6 +288,10 @@ module tb_core;
 
     function automatic instr_t lh(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
         return i_type(OPC_LOAD, rd, 3'b001, rs1, imm);
+    endfunction
+
+    function automatic instr_t sb(logic [4:0] rs1, logic [4:0] rs2, logic [12:0] imm);
+        return s_type(OPC_STORE, 3'b000, rs1, rs2, imm);
     endfunction
 
     function automatic instr_t sd(logic [4:0] rs1, logic [4:0] rs2, logic [12:0] imm);
@@ -405,13 +472,16 @@ module tb_core;
         @(negedge clk);
         rst_n = 0;
         repeat (2) @(negedge clk);
-        for (int i = 0; i < 1024; i++) begin
+        for (int i = 0; i < 4096; i++) begin
             imem[i] = nop();
+        end
+        for (int i = 0; i < 2048; i++) begin
             dmem[i] = '0;
         end
         wp = 0;
         n_exp = 0;
         slow_mem = 1'b0;
+        dev_flag = '0;
     endtask
 
     task automatic release_reset();
@@ -631,7 +701,7 @@ module tb_core;
         begin_test();
         emit_init(1);
         emit(csrrwi(ZERO, CSR_TIE, 5'd2));
-        emit(ld(T0, ZERO, 13'h80));
+        emit(ld(T0, S8, 13'd8));
         emit(beq(T0, ZERO, -4));
         emit(csrrsi(ZERO, CSR_TSTATUS, 5'd1));
         expect_trap(IRQ_BIT | 64'd1, xlen_t'((wp + 1) * 4), 64'd0, TS_S_IE);
@@ -644,7 +714,7 @@ module tb_core;
         repeat (80) @(posedge clk);
         check("no trap while IE = 0", gpr(S9), 64'd512);
         check("still polling (s1 = 0)", gpr(S1), 64'd0);
-        dmem[16] = 64'd1;
+        dev_flag = 64'd1;
         repeat (150) @(posedge clk);
         s1_a = int'(gpr(S1));
         repeat (60) @(posedge clk);
@@ -848,7 +918,7 @@ module tb_core;
         emit(addi(A3, ZERO, 13'd3));
         emit(addi(A4, ZERO, 13'd4));
         emit_halt();
-        run(15);
+        run(20);
         check("independent addi 1 retired early", gpr(7), 64'd1);
         check("independent addi 2 retired early", gpr(8), 64'd2);
         check("independent addi 3 retired early", gpr(9), 64'd3);
@@ -871,9 +941,182 @@ module tb_core;
         check("colliding main-pipeline write survives arbitration", gpr(7), 64'd99);
     endtask
 
+
+    task automatic test_icache_refill();
+        $display("Test 24 -- I-cache cold refill, then hits without memory traffic:");
+        begin_test();
+        for (int i = 0; i < 24; i++) begin
+            emit(addi(S1, S1, 13'd1));
+        end
+        emit_halt();
+        run(300);
+        check("straight-line code executed (s1 = 24)", gpr(S1), 64'd24);
+        check("one 4-beat refill per touched line", xlen_t'(imem_beats), 64'd16);
+    endtask
+
+    task automatic test_icache_redirect_refill();
+        $display("Test 25 -- branch resolves while a wrong-path line is refilling:");
+        begin_test();
+        emit(addi(A0, ZERO, 13'd1));
+        repeat (6) begin
+            emit(nop());
+        end
+        emit(beq(ZERO, ZERO, 260));
+        emit(addi(S1, ZERO, 13'd99));
+        org(16'h120);
+        emit(addi(A1, ZERO, 13'd7));
+        emit_halt();
+        run(200);
+        check("code before branch ran (a0 = 1)", gpr(6), 64'd1);
+        check("wrong-path instruction squashed (s1 = 0)", gpr(S1), 64'd0);
+        check("branch target executed (a1 = 7)", gpr(7), 64'd7);
+        check("completed wrong-path refill + target refill", xlen_t'(imem_beats), 64'd12);
+    endtask
+
+    task automatic test_icache_conflict();
+        $display("Test 26 -- I-cache conflict misses (same index, different tag):");
+        begin_test();
+        emit(addi(T0, ZERO, 13'd5));
+        emit(lui(T1, 21'd1));
+        emit(addi(S1, S1, 13'd1));
+        emit(jalr(ZERO, T1, 13'd0));
+        org(16'h2000);
+        emit(addi(S2, S2, 13'd1));
+        emit(addi(T0, T0, -1));
+        emit(beq(T0, ZERO, 8));
+        emit(jal(ZERO, 8 - 16'h200C));
+        emit_halt();
+        run(1000);
+        check("loop body A ran 5 times (s1 = 5)", gpr(S1), 64'd5);
+        check("loop body B ran 5 times (s2 = 5)", gpr(S2), 64'd5);
+        check("every iteration refilled both lines", xlen_t'(imem_beats), 64'd40);
+    endtask
+
+    task automatic test_dcache_basic(bit slow);
+        $display("Test 27 -- D-cache hit/miss/evict, write-through, no-write-allocate, uncached (slow=%0d):", slow);
+        begin_test();
+        dmem[32] = 64'd11;
+        dmem[33] = 64'd22;
+        dmem[40] = 64'd33;
+        dmem[1056] = 64'd44;
+        dev_flag = 64'h1234;
+        emit(ld(A0, ZERO, 13'h100));
+        emit(ld(A1, ZERO, 13'h108));
+        emit(ld(A2, ZERO, 13'h100));
+        emit(ld(A3, ZERO, 13'h140));
+        emit(lui(T0, 21'd1));
+        emit(ld(A4, T0, 13'h100));
+        emit(ld(A5, ZERO, 13'h100));
+        emit(addi(T1, ZERO, 13'h55));
+        emit(sd(ZERO, T1, 13'h140));
+        emit(ld(A6, ZERO, 13'h140));
+        emit(sd(ZERO, T1, 13'h400));
+        emit(ld(A7, ZERO, 13'h400));
+        emit(lui(S8, 21'd32768));
+        emit(ld(S2, S8, 13'd8));
+        emit_halt();
+        slow_mem = slow;
+        run(slow ? 800 : 400);
+        check("cold miss (a0 = 11)", gpr(6), 64'd11);
+        check("same-line hit (a1 = 22)", gpr(7), 64'd22);
+        check("repeat hit (a2 = 11)", gpr(8), 64'd11);
+        check("second line miss (a3 = 33)", gpr(9), 64'd33);
+        check("conflicting tag evicts (a4 = 44)", gpr(10), 64'd44);
+        check("evicted line misses again (a5 = 11)", gpr(11), 64'd11);
+        check("store hit updates line (a6 = 0x55)", gpr(12), 64'h55);
+        check("store miss does not allocate, data from memory (a7)", gpr(13), 64'h55);
+        check("uncached load (s2 = flag)", gpr(S2), 64'h1234);
+        check("write-through reached memory (hit)", dmem[40], 64'h55);
+        check("write-through reached memory (miss)", dmem[128], 64'h55);
+        check("refill reads: 5 misses x 4 beats + 1 uncached", xlen_t'(dmem_beats), 64'd21);
+        check("stores all went to memory", xlen_t'(dmem_writes), 64'd2);
+    endtask
+
+    task automatic test_dcache_subword();
+        $display("Test 28 -- sub-word load/store lane steering through the D-cache:");
+        begin_test();
+        dmem[32] = 64'h8877_6655_4433_2211;
+        emit(lb(A0, ZERO, 13'h100));
+        emit(lb(A1, ZERO, 13'h101));
+        emit(lb(A2, ZERO, 13'h107));
+        emit(lbu(A3, ZERO, 13'h107));
+        emit(lhu(A4, ZERO, 13'h102));
+        emit(lh(A5, ZERO, 13'h106));
+        emit(lw(A6, ZERO, 13'h104));
+        emit(lwu(A7, ZERO, 13'h104));
+        emit(addi(T0, ZERO, 13'hAB));
+        emit(sb(ZERO, T0, 13'h105));
+        emit(ld(T1, ZERO, 13'h100));
+        emit(addi(T2, ZERO, 13'h5EF));
+        emit(sh(ZERO, T2, 13'h102));
+        emit(ld(T3, ZERO, 13'h100));
+        emit(addi(T4, ZERO, 13'h123));
+        emit(sw(ZERO, T4, 13'h104));
+        emit(ld(T5, ZERO, 13'h100));
+        emit_halt();
+        run(400);
+        check("lb offset 0", gpr(6), 64'h11);
+        check("lb offset 1", gpr(7), 64'h22);
+        check("lb offset 7 sign-extends", gpr(8), -64'd120);
+        check("lbu offset 7 zero-extends", gpr(9), 64'h88);
+        check("lhu offset 2", gpr(10), 64'h4433);
+        check("lh offset 6 sign-extends", gpr(11), 64'hFFFF_FFFF_FFFF_8877);
+        check("lw offset 4 sign-extends", gpr(12), 64'hFFFF_FFFF_8877_6655);
+        check("lwu offset 4 zero-extends", gpr(13), 64'h8877_6655);
+        check("sb merged into cached line", gpr(15), 64'h8877_AB55_4433_2211);
+        check("sh merged into cached line", gpr(17), 64'h8877_AB55_05EF_2211);
+        check("sw merged into cached line", gpr(19), 64'h0000_0123_05EF_2211);
+        check("write-through merged bytes in memory", dmem[32], 64'h0000_0123_05EF_2211);
+        check("only the first load missed", xlen_t'(dmem_beats), 64'd4);
+    endtask
+
+    task automatic test_stall_forwarding(bit slow);
+        $display("Test 29 -- operand forwarded during the stall cycle survives the stall (slow=%0d):", slow);
+        begin_test();
+        dmem[32] = 64'd77;
+        emit(addi(T0, ZERO, 13'd6));
+        emit(addi(T1, ZERO, 13'd7));
+        emit(addi(A0, ZERO, 13'd5));
+        emit(ld(A1, ZERO, 13'h100));
+        emit(add_(A2, A0, A0));
+        emit(addi(T2, ZERO, 13'd9));
+        emit(ld(A4, ZERO, 13'h140));
+        emit(mul(A3, T0, T2));
+        emit(addi(A5, A3, 13'd1));
+        emit_halt();
+        slow_mem = slow;
+        run(slow ? 600 : 300);
+        check("load result", gpr(7), 64'd77);
+        check("ALU consumer behind stalled load (a2 = 10)", gpr(8), 64'd10);
+        check("mul behind stalled load uses forwarded operand (a3 = 54)", gpr(9), 64'd54);
+        check("consumer of mul (a5 = 55)", gpr(11), 64'd55);
+    endtask
+
+    task automatic test_stall_muldiv_once(bit slow);
+        $display("Test 30 -- multiply held in EX across a long stall dispatches once (slow=%0d):", slow);
+        begin_test();
+        emit(addi(T0, ZERO, 13'd6));
+        emit(addi(T1, ZERO, 13'd7));
+        emit(ld(A1, ZERO, 13'h100));
+        emit(mul(A0, T0, T1));
+        emit(addi(A2, ZERO, 13'd1));
+        emit(addi(A3, ZERO, 13'd2));
+        emit(addi(A4, A0, 13'd1));
+        emit_halt();
+        slow_mem = slow;
+        run(slow ? 600 : 300);
+        check("mul result (a0 = 42)", gpr(6), 64'd42);
+        check("independent younger ops (a2)", gpr(8), 64'd1);
+        check("independent younger ops (a3)", gpr(9), 64'd2);
+        check("dependent consumer (a4 = 43)", gpr(10), 64'd43);
+        check("multiply dispatched exactly once", xlen_t'(muldiv_dispatches), 64'd1);
+    endtask
+
     initial begin
-        for (int i = 0; i < 1024; i++) begin
+        for (int i = 0; i < 4096; i++) begin
             imem[i] = i_type(OPC_OP_IMM, 5'd0, 3'b000, 5'd0, 13'd0);
+        end
+        for (int i = 0; i < 2048; i++) begin
             dmem[i] = '0;
         end
 
@@ -965,6 +1208,16 @@ module tb_core;
         test_muldiv_structural();
         test_muldiv_overlap();
         test_muldiv_arbitration();
+        test_icache_refill();
+        test_icache_redirect_refill();
+        test_icache_conflict();
+        test_dcache_basic(1'b0);
+        test_dcache_basic(1'b1);
+        test_dcache_subword();
+        test_stall_forwarding(1'b0);
+        test_stall_forwarding(1'b1);
+        test_stall_muldiv_once(1'b0);
+        test_stall_muldiv_once(1'b1);
 
         $display("================================================");
         if (errors == 0) begin

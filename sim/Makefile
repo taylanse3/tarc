@@ -12,6 +12,8 @@ RTL = ../rtl/core/tarc_pkg.sv \
       ../rtl/core/writeback.sv \
       ../rtl/core/hazard_unit.sv \
       ../rtl/core/fetch.sv \
+      ../rtl/core/icache.sv \
+      ../rtl/core/dcache.sv \
       ../rtl/core/core.sv
 
 TB = ../tb/tb_core.sv

@@ -7,10 +7,20 @@ package tarc_pkg;
     parameter int NUM_FPR = 32;
     parameter int NUM_VR = 32;
 
+    parameter int CACHE_OFFSET_BITS = 5;
+    parameter int CACHE_INDEX_BITS = 8;
+    parameter int CACHE_BEAT_BITS = CACHE_OFFSET_BITS - 3;
+    parameter int CACHE_TAG_BITS = XLEN - CACHE_INDEX_BITS - CACHE_OFFSET_BITS;
+    parameter int CACHE_LINES = 2 ** CACHE_INDEX_BITS;
+    parameter int CACHE_BEATS = 2 ** CACHE_BEAT_BITS;
+
     typedef logic [XLEN-1:0] xlen_t;
     typedef logic [ILEN-1:0] instr_t;
     typedef logic [$clog2(NUM_GPR)-1:0] greg_t;
     typedef logic [VLEN-1:0] vreg_t;
+    typedef logic [CACHE_TAG_BITS-1:0] cache_tag_t;
+    typedef logic [CACHE_INDEX_BITS-1:0] cache_index_t;
+    typedef logic [CACHE_BEAT_BITS-1:0] cache_beat_t;
 
     typedef enum logic [5:0] {
         OPC_OP = 6'h00,
@@ -200,6 +210,11 @@ package tarc_pkg;
         RF_VEC = 2'd2,
         RF_NONE = 2'd3
     } regfile_e;
+
+    typedef enum logic {
+        CACHE_IDLE,
+        CACHE_REFILL
+    } cache_state_e;
 
     typedef enum logic [2:0] {
         IMM_I,

@@ -103,7 +103,7 @@ module decode (
         illegal = 1'b0;
         illegal_cause = CAUSE_ILLEGAL_INSTR;
 
-        if (!if_id.fault_valid) begin
+        if (if_id.valid && !if_id.fault_valid) begin
             if (illegal_opcode) begin
                 illegal = 1'b1;
             end else begin

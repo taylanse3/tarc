@@ -2,21 +2,22 @@ import tarc_pkg::*;
 
 module core #(
     parameter logic [63:0] RESET_VECTOR = 64'h0000_0000_0000_1000,
-    parameter int HARTID = 0
+    parameter int HARTID = 0,
+    parameter logic [63:0] UNCACHED_BASE = 64'h0000_0000_1000_0000
 ) (
     input logic clk,
     input logic rst_n,
 
     output logic imem_req,
     output xlen_t imem_addr,
-    input instr_t imem_rdata,
+    input xlen_t imem_rdata,
     input logic imem_ready,
 
     output logic dmem_req,
     output logic dmem_we,
     output xlen_t dmem_addr,
     output xlen_t dmem_wdata,
-    output logic [1:0] dmem_size,
+    output logic [7:0] dmem_wstrb,
     input xlen_t dmem_rdata,
     input logic dmem_ready,
 
@@ -26,7 +27,7 @@ module core #(
 );
 
     if_id_t if_id;
-    id_ex_t id_ex_d, id_ex_q;
+    id_ex_t id_ex_d, id_ex_q, id_ex_hold;
     ex_mem_t ex_mem_d, ex_mem_q;
     mem_wb_t mem_wb_d, mem_wb_q;
 
@@ -35,6 +36,16 @@ module core #(
     logic branch_mispredict;
     xlen_t branch_target;
     logic mem_stall;
+
+    logic ic_req;
+    xlen_t ic_addr;
+    instr_t ic_rdata;
+    logic ic_ready;
+
+    logic dc_req, dc_we;
+    xlen_t dc_addr, dc_wdata, dc_rdata;
+    logic [1:0] dc_size;
+    logic dc_ready;
 
     logic trap_valid, sret_valid, wfi_valid;
     xlen_t trap_epc, trap_cause, trap_tval;
@@ -66,13 +77,26 @@ module core #(
         .branch_pc(branch_target),
         .wfi_halt(wfi_valid),
         .irq_any_pending(irq_any_pending),
-        .imem_req(imem_req),
-        .imem_addr(imem_addr),
-        .imem_rdata(imem_rdata),
-        .imem_ready(imem_ready),
+        .imem_req(ic_req),
+        .imem_addr(ic_addr),
+        .imem_rdata(ic_rdata),
+        .imem_ready(ic_ready),
         .imem_fault(1'b0),
         .imem_fault_cause(CAUSE_INSTR_FAULT),
         .if_id(if_id)
+    );
+
+    icache u_icache (
+        .clk(clk),
+        .rst_n(rst_n),
+        .req(ic_req),
+        .addr(ic_addr),
+        .rdata(ic_rdata),
+        .ready(ic_ready),
+        .mem_req(imem_req),
+        .mem_addr(imem_addr),
+        .mem_rdata(imem_rdata),
+        .mem_ready(imem_ready)
     );
 
     greg_t rs1_addr, rs2_addr;
@@ -117,7 +141,7 @@ module core #(
         end else if (trap_flush) begin
             id_ex_q <= '0;
         end else if (mem_stall) begin
-            id_ex_q <= id_ex_q;
+            id_ex_q <= id_ex_hold;
         end else if (branch_mispredict) begin
             id_ex_q <= '0;
         end else if (stall_d_hz) begin
@@ -129,6 +153,16 @@ module core #(
 
     xlen_t ex_rs1_fwd, ex_rs2_fwd;
     logic ex_rs1_use_fwd, ex_rs2_use_fwd;
+
+    always_comb begin
+        id_ex_hold = id_ex_q;
+        if (ex_rs1_use_fwd && id_ex_q.reads_rs1) begin
+            id_ex_hold.rs1_data = ex_rs1_fwd;
+        end
+        if (ex_rs2_use_fwd && id_ex_q.reads_rs2) begin
+            id_ex_hold.rs2_data = ex_rs2_fwd;
+        end
+    end
 
     execute u_execute (
         .id_ex(id_ex_q),
@@ -155,13 +189,13 @@ module core #(
 
     memory u_memory (
         .ex_mem(ex_mem_q),
-        .dmem_req(dmem_req),
-        .dmem_we(dmem_we),
-        .dmem_addr(dmem_addr),
-        .dmem_wdata(dmem_wdata),
-        .dmem_size(dmem_size),
-        .dmem_rdata(dmem_rdata),
-        .dmem_ready(dmem_ready),
+        .dmem_req(dc_req),
+        .dmem_we(dc_we),
+        .dmem_addr(dc_addr),
+        .dmem_wdata(dc_wdata),
+        .dmem_size(dc_size),
+        .dmem_rdata(dc_rdata),
+        .dmem_ready(dc_ready),
         .dmem_fault(1'b0),
         .dmem_fault_cause(CAUSE_LOAD_FAULT),
         .dmem_fault_tval('0),
@@ -180,6 +214,27 @@ module core #(
         .trap_tval(trap_tval),
         .sret_valid(sret_valid),
         .wfi_valid(wfi_valid)
+    );
+
+    dcache #(
+        .UNCACHED_BASE(UNCACHED_BASE)
+    ) u_dcache (
+        .clk(clk),
+        .rst_n(rst_n),
+        .req(dc_req),
+        .we(dc_we),
+        .addr(dc_addr),
+        .wdata(dc_wdata),
+        .size(dc_size),
+        .rdata(dc_rdata),
+        .ready(dc_ready),
+        .mem_req(dmem_req),
+        .mem_we(dmem_we),
+        .mem_addr(dmem_addr),
+        .mem_wdata(dmem_wdata),
+        .mem_wstrb(dmem_wstrb),
+        .mem_rdata(dmem_rdata),
+        .mem_ready(dmem_ready)
     );
 
     csr #(
@@ -240,6 +295,7 @@ module core #(
         .rs1_use_fwd(ex_rs1_use_fwd),
         .rs2_use_fwd(ex_rs2_use_fwd),
         .trap_flush(trap_flush),
+        .mem_stall(mem_stall),
         .muldiv_grant(muldiv_grant),
         .muldiv_valid(muldiv_valid),
         .muldiv_rd(muldiv_rd),
