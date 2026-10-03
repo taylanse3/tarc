@@ -1112,6 +1112,38 @@ module tb_core;
         check("multiply dispatched exactly once", xlen_t'(muldiv_dispatches), 64'd1);
     endtask
 
+    task automatic test_muldiv_waw(bit slow);
+        $display("Test 31 -- write-after-write against a pending muldiv result (slow=%0d):", slow);
+        begin_test();
+        dmem[32] = 64'd77;
+        emit(addi(T0, ZERO, 13'd6));
+        emit(addi(T1, ZERO, 13'd7));
+        emit(mul(A0, T0, T1));
+        emit(addi(A0, ZERO, 13'd5));
+        emit(addi(A1, A0, 13'd1));
+        emit(div(A2, T0, T1));
+        emit(ld(A2, ZERO, 13'h100));
+        emit(addi(A3, A2, 13'd1));
+        emit(mul(A4, T0, T1));
+        emit(csrrs(A4, CSR_HARTID, ZERO));
+        emit(mul(A5, T0, T1));
+        emit(jal(A5, 8));
+        emit(nop());
+        emit(mul(A6, T0, T1));
+        emit(mul(A7, T0, T1));
+        emit_halt();
+        slow_mem = slow;
+        run(slow ? 800 : 400);
+        check("younger addi wins over older mul (a0 = 5)", gpr(6), 64'd5);
+        check("consumer of the younger write (a1 = 6)", gpr(7), 64'd6);
+        check("younger load wins over older div (a2 = 77)", gpr(8), 64'd77);
+        check("consumer of the load (a3 = 78)", gpr(9), 64'd78);
+        check("younger csr read wins over older mul (a4 = hartid)", gpr(10), 64'd3);
+        check("younger jal link wins over older mul (a5)", gpr(11), 64'd48);
+        check("independent mul still completes (a6 = 42)", gpr(12), 64'd42);
+        check("back-to-back mul still completes (a7 = 42)", gpr(13), 64'd42);
+    endtask
+
     initial begin
         for (int i = 0; i < 4096; i++) begin
             imem[i] = i_type(OPC_OP_IMM, 5'd0, 3'b000, 5'd0, 13'd0);
@@ -1218,6 +1250,8 @@ module tb_core;
         test_stall_forwarding(1'b1);
         test_stall_muldiv_once(1'b0);
         test_stall_muldiv_once(1'b1);
+        test_muldiv_waw(1'b0);
+        test_muldiv_waw(1'b1);
 
         $display("================================================");
         if (errors == 0) begin

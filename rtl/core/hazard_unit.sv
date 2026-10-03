@@ -29,6 +29,8 @@ module hazard_unit (
     input logic d_valid,
     input greg_t d_rs1,
     input greg_t d_rs2,
+    input greg_t d_rd,
+    input regfile_e d_rd_rf,
     input logic d_reads_rs1,
     input logic d_reads_rs2,
     input fu_tag_e d_fu,
@@ -121,12 +123,16 @@ module hazard_unit (
         && ((d_reads_rs1 && (d_rs1 == muldiv_pending_rd))
         || (d_reads_rs2 && (d_rs2 == muldiv_pending_rd)));
 
+    logic waw_stall;
+    assign waw_stall = d_valid && muldiv_busy && (muldiv_pending_rd != '0)
+        && (d_rd_rf == RF_INT) && (d_rd == muldiv_pending_rd);
+
     logic csr_unit_stall;
     assign csr_unit_stall = d_valid && d_is_csr_write
         && (muldiv_busy || fpu_busy || vec_busy);
 
     logic stall_any;
-    assign stall_any = load_use_stall || fu_busy_stall || scoreboard_stall
+    assign stall_any = load_use_stall || fu_busy_stall || scoreboard_stall || waw_stall
         || csr_drain_active || csr_unit_stall;
 
     assign flush_d = ex_branch_mispredict;

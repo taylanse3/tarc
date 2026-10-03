@@ -356,6 +356,8 @@ module core #(
         .d_valid(if_id.valid),
         .d_rs1(rs1_addr),
         .d_rs2(rs2_addr),
+        .d_rd(id_ex_d.rd),
+        .d_rd_rf(id_ex_d.rd_rf),
         .d_reads_rs1(d_reads_rs1),
         .d_reads_rs2(d_reads_rs2),
         .d_fu(d_fu),
