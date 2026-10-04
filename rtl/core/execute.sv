@@ -8,6 +8,9 @@ module execute (
     input logic rs1_use_fwd,
     input logic rs2_use_fwd,
 
+    input xlen_t fp2_fwd_data,
+    input logic fp2_use_fwd,
+
     output ex_mem_t ex_mem,
 
     output logic branch_mispredict,
@@ -17,6 +20,9 @@ module execute (
     xlen_t op_a, op_b;
     assign op_a = (rs1_use_fwd && id_ex.reads_rs1) ? rs1_fwd_data : id_ex.rs1_data;
     assign op_b = (rs2_use_fwd && id_ex.reads_rs2) ? rs2_fwd_data : id_ex.rs2_data;
+
+    xlen_t fp_b;
+    assign fp_b = (fp2_use_fwd && id_ex.reads_fp2) ? fp2_fwd_data : id_ex.fp2_data;
 
     xlen_t alu_result;
     logic eq, lt_signed, lt_unsigned;
@@ -91,7 +97,7 @@ module execute (
             ex_mem.alu_result = id_ex.pc + 4;
         end else if (id_ex.is_store) begin
             ex_mem.alu_result = op_a + id_ex.imm;
-            ex_mem.rs2_data = op_b;
+            ex_mem.rs2_data = id_ex.reads_fp2 ? fp_b : op_b;
         end else begin
             ex_mem.alu_result = alu_result;
         end

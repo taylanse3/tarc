@@ -4,9 +4,19 @@ TOP = tb_core
 RTL = ../rtl/core/tarc_pkg.sv \
       ../rtl/core/alu.sv \
       ../rtl/core/regfile_int.sv \
+      ../rtl/core/regfile_fp.sv \
       ../rtl/core/csr.sv \
       ../rtl/core/decode.sv \
       ../rtl/core/muldiv.sv \
+      ../rtl/core/fpu_unpack.sv \
+      ../rtl/core/fpu_round.sv \
+      ../rtl/core/fpu_fma.sv \
+      ../rtl/core/fpu_div.sv \
+      ../rtl/core/fpu_sqrt.sv \
+      ../rtl/core/fpu_f2i.sv \
+      ../rtl/core/fpu_i2f.sv \
+      ../rtl/core/fpu_misc.sv \
+      ../rtl/core/fpu.sv \
       ../rtl/core/execute.sv \
       ../rtl/core/memory.sv \
       ../rtl/core/writeback.sv \

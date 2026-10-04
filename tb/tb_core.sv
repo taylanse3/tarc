@@ -363,6 +363,131 @@ module tb_core;
         return i_type(OPC_SYSTEM, ZERO, F3_WFI, ZERO, 13'd0);
     endfunction
 
+
+    localparam logic [4:0] FA0 = 5'd0;
+    localparam logic [4:0] FA1 = 5'd1;
+    localparam logic [4:0] FA2 = 5'd2;
+    localparam logic [4:0] FA3 = 5'd3;
+    localparam logic [4:0] FA4 = 5'd4;
+    localparam logic [4:0] FA5 = 5'd5;
+    localparam logic [4:0] FA6 = 5'd6;
+    localparam logic [4:0] FA7 = 5'd7;
+    localparam logic [4:0] FT0 = 5'd8;
+    localparam logic [4:0] FT1 = 5'd9;
+    localparam logic [4:0] FT2 = 5'd10;
+    localparam logic [4:0] FT3 = 5'd11;
+    localparam logic [4:0] FT4 = 5'd12;
+    localparam logic [4:0] FT5 = 5'd13;
+    localparam logic [4:0] FT6 = 5'd14;
+    localparam logic [4:0] FT7 = 5'd15;
+    localparam logic [4:0] FT8 = 5'd16;
+
+    localparam logic [2:0] RM_RNE = 3'b000;
+    localparam logic [2:0] RM_RTZ = 3'b001;
+    localparam logic [2:0] RM_RDN = 3'b010;
+    localparam logic [2:0] RM_RUP = 3'b011;
+    localparam logic [2:0] RM_DYN = 3'b111;
+
+    function automatic instr_t fop(
+        logic [2:0] f3,
+        logic [4:0] rd,
+        logic [4:0] rs1,
+        logic [4:0] rs2,
+        logic dbl,
+        logic [2:0] rm
+    );
+        return r_type(OPC_FOP, rd, f3, rs1, rs2, {4'b0000, rm, dbl});
+    endfunction
+
+    function automatic instr_t fadd(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2, logic dbl, logic [2:0] rm);
+        return fop(3'b000, rd, rs1, rs2, dbl, rm);
+    endfunction
+
+    function automatic instr_t fsub(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2, logic dbl, logic [2:0] rm);
+        return fop(3'b001, rd, rs1, rs2, dbl, rm);
+    endfunction
+
+    function automatic instr_t fmul(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2, logic dbl, logic [2:0] rm);
+        return fop(3'b010, rd, rs1, rs2, dbl, rm);
+    endfunction
+
+    function automatic instr_t fdiv(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2, logic dbl, logic [2:0] rm);
+        return fop(3'b011, rd, rs1, rs2, dbl, rm);
+    endfunction
+
+    function automatic instr_t fsqrt(logic [4:0] rd, logic [4:0] rs1, logic dbl, logic [2:0] rm);
+        return fop(3'b100, rd, rs1, ZERO, dbl, rm);
+    endfunction
+
+    function automatic instr_t fma_op(
+        logic [1:0] variant,
+        logic [4:0] rd,
+        logic [4:0] rs1,
+        logic [4:0] rs2,
+        logic [4:0] rs3,
+        logic dbl,
+        logic [2:0] rm
+    );
+        return r_type(OPC_FMADD, rd, {dbl, variant}, rs1, rs2, {rm, rs3});
+    endfunction
+
+    function automatic instr_t fcmp(logic [1:0] kind, logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2, logic dbl);
+        return r_type(OPC_FCMP, rd, {kind, dbl}, rs1, rs2, 8'h00);
+    endfunction
+
+    function automatic instr_t fcvt(logic [2:0] cat, logic [4:0] rd, logic [4:0] rs1, logic [7:0] rem);
+        return r_type(OPC_FCVT, rd, cat, rs1, ZERO, rem);
+    endfunction
+
+    function automatic instr_t fsgnj(logic [2:0] f3, logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2, logic dbl);
+        return r_type(OPC_FSGNJ, rd, f3, rs1, rs2, {7'b0, dbl});
+    endfunction
+
+    function automatic instr_t fclass(logic [4:0] rd, logic [4:0] rs1);
+        return r_type(OPC_FSGNJ, rd, 3'b011, rs1, ZERO, 8'h00);
+    endfunction
+
+    function automatic instr_t fmv(logic [2:0] f3, logic [4:0] rd, logic [4:0] rs1);
+        return r_type(OPC_FMV, rd, f3, rs1, ZERO, 8'h00);
+    endfunction
+
+    function automatic instr_t fld(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
+        return i_type(OPC_FLOAD, rd, 3'b001, rs1, imm);
+    endfunction
+
+    function automatic instr_t flw(logic [4:0] rd, logic [4:0] rs1, logic [12:0] imm);
+        return i_type(OPC_FLOAD, rd, 3'b000, rs1, imm);
+    endfunction
+
+    function automatic instr_t fsd(logic [4:0] rs1, logic [4:0] rs2, logic [12:0] imm);
+        return s_type(OPC_FSTORE, 3'b001, rs1, rs2, imm);
+    endfunction
+
+    function automatic instr_t fsw(logic [4:0] rs1, logic [4:0] rs2, logic [12:0] imm);
+        return s_type(OPC_FSTORE, 3'b000, rs1, rs2, imm);
+    endfunction
+
+    function automatic xlen_t fpr(int idx);
+        return dut.u_regfile_fp.regs[idx];
+    endfunction
+
+    int fpu_dispatches;
+    int fpu_overlap;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            fpu_dispatches <= 0;
+            fpu_overlap <= 0;
+        end else begin
+            if (dut.u_fpu.dispatch) begin
+                fpu_dispatches <= fpu_dispatches + 1;
+            end
+            if (dut.u_fpu.busy_q && !dut.fpu_valid && dut.int_we) begin
+                fpu_overlap <= fpu_overlap + 1;
+            end
+        end
+    end
+
     int errors = 0;
 
     task automatic check(
@@ -673,7 +798,7 @@ module tb_core;
     endtask
 
     task automatic test_fp_vec_disabled();
-        $display("Test 12 -- FP/vector disabled exceptions, and FP/vector-enabled traps as not implemented:");
+        $display("Test 12 -- FP/vector disabled exceptions, FP enabled executes, vector enabled traps as not implemented:");
         begin_test();
         emit_init(0);
         emit_fault(r_type(OPC_FOP, ZERO, 3'b000, ZERO, ZERO, 8'h01), CAUSE_FP_DISABLED, TS_S);
@@ -681,17 +806,17 @@ module tb_core;
         emit_fault(r_type(OPC_VIOP, 5'd1, 3'b000, 5'd2, 5'd3, 8'h01), CAUSE_VEC_DISABLED, TS_S);
         emit_fault(i_type(OPC_VCFG, A0, 3'b000, A1, 13'd0), CAUSE_VEC_DISABLED, TS_S);
         emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
-        emit_fault(r_type(OPC_FOP, ZERO, 3'b000, ZERO, ZERO, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit(r_type(OPC_FOP, ZERO, 3'b000, ZERO, ZERO, 8'h01));
         emit(addi(T0, ZERO, 13'd32));
         emit(csrrs(ZERO, CSR_TSTATUS, T0));
-        emit_fault(r_type(OPC_VIOP, 5'd1, 3'b000, 5'd2, 5'd3, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h2C);
+        emit_fault(r_type(OPC_VIOP, 5'd1, 3'b000, 5'd2, 5'd3, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h34);
         emit(csrrs(S3, CSR_TSTATUS, ZERO));
         emit(addi(S4, ZERO, 13'h55));
         emit_halt();
         load_exc_handler();
         run(1200);
-        check("FS=Clean, VS=Clean, PP=S", gpr(24), 64'h2C);
-        check("marker reached after FP/vector traps as illegal", gpr(25), 64'h55);
+        check("FS=Dirty after FADD, VS=Clean, PP=S", gpr(24), 64'h34);
+        check("marker reached after vector trap as illegal", gpr(25), 64'h55);
         check_trap_log();
     endtask
 
@@ -1144,6 +1269,272 @@ module tb_core;
         check("back-to-back mul still completes (a7 = 42)", gpr(13), 64'd42);
     endtask
 
+
+    task automatic test_fp_loadstore();
+        $display("Test 32 -- FP load/store, NaN-boxing, FS Clean to Dirty:");
+        begin_test();
+        dmem[32] = 64'h3FF8_0000_0000_0000;
+        dmem[33] = 64'hDEAD_BEEF_4020_0000;
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit(fld(FA0, ZERO, 13'h100));
+        emit(fsd(ZERO, FA0, 13'h110));
+        emit(flw(FA1, ZERO, 13'h108));
+        emit(fsw(ZERO, FA1, 13'h118));
+        emit(flw(FA2, ZERO, 13'h10C));
+        emit(csrrs(A2, CSR_TSTATUS, ZERO));
+        emit(fmv(3'b010, A0, FA0));
+        emit(fmv(3'b000, A1, FA1));
+        emit(fmv(3'b000, A3, FA2));
+        emit_halt();
+        run(500);
+        check("fld loaded double", fpr(0), 64'h3FF8_0000_0000_0000);
+        check("flw NaN-boxes the loaded word", fpr(1), 64'hFFFF_FFFF_4020_0000);
+        check("flw upper-half word, lane steering", fpr(2), 64'hFFFF_FFFF_DEAD_BEEF);
+        check("fsd stored the full register", dmem[34], 64'h3FF8_0000_0000_0000);
+        check("fsw stored only the low word", dmem[35], 64'h0000_0000_4020_0000);
+        check("FS = Dirty after FP load", gpr(8), 64'h10);
+        check("fmv.x.d", gpr(6), 64'h3FF8_0000_0000_0000);
+        check("fmv.x.w sign-extends low word", gpr(7), 64'h0000_0000_4020_0000);
+        check("fmv.x.w negative word sign-extends", gpr(9), 64'hFFFF_FFFF_DEAD_BEEF);
+    endtask
+
+    task automatic test_fp_arith();
+        $display("Test 33 -- FP arithmetic chain, single precision, boxing:");
+        begin_test();
+        dmem[32] = 64'h3FF8_0000_0000_0000;
+        dmem[33] = 64'h4002_0000_0000_0000;
+        dmem[34] = 64'h4010_0000_3FC0_0000;
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit(fld(FA0, ZERO, 13'h100));
+        emit(fld(FA1, ZERO, 13'h108));
+        emit(fadd(FA2, FA0, FA1, 1'b1, RM_RNE));
+        emit(fmul(FA3, FA2, FA2, 1'b1, RM_RNE));
+        emit(fdiv(FA4, FA3, FA1, 1'b1, RM_RNE));
+        emit(fsqrt(FA5, FA4, 1'b1, RM_RNE));
+        emit(fsub(FA6, FA0, FA1, 1'b1, RM_RNE));
+        emit(fma_op(2'b00, FA7, FA0, FA1, FA5, 1'b1, RM_RNE));
+        emit(fma_op(2'b11, FT1, FA0, FA1, FA5, 1'b1, RM_RNE));
+        emit(flw(FT2, ZERO, 13'h110));
+        emit(flw(FT3, ZERO, 13'h114));
+        emit(fadd(FT4, FT2, FT3, 1'b0, RM_RNE));
+        emit(fmul(FT5, FT2, FT3, 1'b0, RM_RNE));
+        emit(fcvt(3'b000, FT6, FT2, 8'h00));
+        emit(fcvt(3'b000, FT7, FA3, 8'h01));
+        emit(fadd(FT8, FA0, FT2, 1'b0, RM_RNE));
+        emit_halt();
+        run(800);
+        check("fadd.d 1.5+2.25", fpr(2), 64'h400E_0000_0000_0000);
+        check("fmul.d dependent", fpr(3), 64'h402C_2000_0000_0000);
+        check("fdiv.d dependent", fpr(4), 64'h4019_0000_0000_0000);
+        check("fsqrt.d dependent", fpr(5), 64'h4004_0000_0000_0000);
+        check("fsub.d", fpr(6), 64'hBFE8_0000_0000_0000);
+        check("fmadd.d", fpr(7), 64'h4017_8000_0000_0000);
+        check("fnmsub.d", fpr(9), 64'hBFEC_0000_0000_0000);
+        check("fadd.s boxed result", fpr(12), 64'hFFFF_FFFF_4070_0000);
+        check("fmul.s boxed result", fpr(13), 64'hFFFF_FFFF_4058_0000);
+        check("fcvt.d.s widen", fpr(14), 64'h3FF8_0000_0000_0000);
+        check("fcvt.s.d narrow boxed", fpr(15), 64'hFFFF_FFFF_4161_0000);
+        check("unboxed single operand reads as qNaN", fpr(16), 64'hFFFF_FFFF_7FC0_0000);
+    endtask
+
+    task automatic test_fp_int_interplay();
+        $display("Test 34 -- FP results into the integer pipeline, int to FP:");
+        begin_test();
+        dmem[32] = 64'h3FF8_0000_0000_0000;
+        dmem[33] = 64'h4002_0000_0000_0000;
+        dmem[34] = 64'hBFE8_0000_0000_0000;
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit(fld(FA0, ZERO, 13'h100));
+        emit(fld(FA1, ZERO, 13'h108));
+        emit(fld(FA6, ZERO, 13'h110));
+        emit(fcmp(2'b01, A0, FA0, FA1, 1'b1));
+        emit(fcmp(2'b00, A1, FA0, FA1, 1'b1));
+        emit(fcmp(2'b10, A2, FA1, FA1, 1'b1));
+        emit(addi(A3, A0, 13'd10));
+        emit(fclass(A4, FA0));
+        emit(fcvt(3'b010, A5, FA1, 8'h05));
+        emit(fcvt(3'b010, A6, FA6, 8'h08));
+        emit(addi(T0, ZERO, 13'd7));
+        emit(fcvt(3'b100, FA2, T0, 8'h01));
+        emit(fmv(3'b010, A7, FA2));
+        emit(addi(T1, ZERO, 13'd1));
+        emit(slli(T1, T1, 6'd62));
+        emit(fmv(3'b011, FA3, T1));
+        emit(fadd(FA4, FA3, FA3, 1'b1, RM_RNE));
+        emit(fmv(3'b010, T2, FA4));
+        emit(mul(S1, T0, T0));
+        emit(fcmp(2'b00, S1, FA0, FA0, 1'b1));
+        emit(fcmp(2'b00, S2, FA0, FA0, 1'b1));
+        emit(addi(S2, ZERO, 13'd5));
+        emit(fcvt(3'b010, S3, FA1, 8'h0D));
+        emit_halt();
+        run(600);
+        check("flt result (a0)", gpr(6), 64'd1);
+        check("feq 1.5==2.25 = 0 (a1)", gpr(7), 64'd0);
+        check("fle x<=x = 1 (a2)", gpr(8), 64'd1);
+        check("consumer of fcmp result (a3 = 11)", gpr(9), 64'd11);
+        check("fclass +normal (a4)", gpr(10), 64'h40);
+        check("fcvt.l.d RTZ 2.25 = 2 (a5)", gpr(11), 64'd2);
+        check("fcvt.w.d RDN -0.75 = -1 sign-extended (a6)", gpr(12), 64'hFFFF_FFFF_FFFF_FFFF);
+        check("fcvt.d.l 7 then fmv.x.d (a7)", gpr(13), 64'h401C_0000_0000_0000);
+        check("fmv.d.x then fadd then fmv.x.d (t2)", gpr(16), 64'h4010_0000_0000_0000);
+        check("younger fcmp wins over older mul (s1 = 1)", gpr(22), 64'd1);
+        check("younger addi wins over older fcmp (s2 = 5)", gpr(23), 64'd5);
+        check("fcvt.l.d RUP 2.25 = 3 (s3)", gpr(24), 64'd3);
+    endtask
+
+    task automatic test_fp_flags_rm();
+        $display("Test 35 -- fflags accumulation, fcsr read ordering, dynamic rounding:");
+        begin_test();
+        dmem[32] = 64'h3FF0_0000_0000_0000;
+        dmem[33] = 64'h4008_0000_0000_0000;
+        dmem[34] = 64'h4000_0000_0000_0000;
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit(fld(FA0, ZERO, 13'h100));
+        emit(fld(FA1, ZERO, 13'h108));
+        emit(fld(FA2, ZERO, 13'h110));
+        emit(fsub(FA7, FA2, FA2, 1'b1, RM_RNE));
+        emit(fdiv(FA3, FA0, FA1, 1'b1, RM_RNE));
+        emit(csrrs(A0, CSR_FCSR, ZERO));
+        emit(csrrwi(ZERO, CSR_FCSR, 5'd0));
+        emit(fdiv(FA4, FA0, FA7, 1'b1, RM_RNE));
+        emit(csrrs(A1, CSR_FCSR, ZERO));
+        emit(fsub(FA5, FA7, FA0, 1'b1, RM_RNE));
+        emit(fsqrt(FA6, FA5, 1'b1, RM_RNE));
+        emit(csrrs(A2, CSR_FCSR, ZERO));
+        emit(csrrwi(ZERO, CSR_FCSR, 5'd3));
+        emit(fdiv(FT0, FA2, FA1, 1'b1, RM_DYN));
+        emit(fdiv(FT1, FA2, FA1, 1'b1, RM_RTZ));
+        emit(fdiv(FT2, FA2, FA1, 1'b1, RM_RUP));
+        emit(csrrs(A3, CSR_FCSR, ZERO));
+        emit_halt();
+        run(1200);
+        check("1/3 inexact: fcsr read waits for the divide (NX)", gpr(6), 64'h08);
+        check("1/0: DZ", gpr(7), 64'h40);
+        check("sqrt(-1): DZ|NV sticky", gpr(8), 64'hC0);
+        check("1/0 result is +inf", fpr(4), 64'h7FF0_0000_0000_0000);
+        check("sqrt(-1) result is canonical NaN", fpr(6), 64'h7FF8_0000_0000_0000);
+        check("DYN uses fcsr.rm = RUP", fpr(8), 64'h3FE5_5555_5555_5556);
+        check("static RTZ overrides fcsr.rm", fpr(9), 64'h3FE5_5555_5555_5555);
+        check("static RUP", fpr(10), 64'h3FE5_5555_5555_5556);
+        check("fcsr keeps rm and sets NX", gpr(9), 64'h0B);
+    endtask
+
+    task automatic test_fp_overlap();
+        $display("Test 36 -- independent integer ops overlap an FP divide, structural and WAW hazards:");
+        begin_test();
+        dmem[32] = 64'h3FF8_0000_0000_0000;
+        dmem[33] = 64'h4002_0000_0000_0000;
+        dmem[34] = 64'h4010_0000_0000_0000;
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit(fld(FA0, ZERO, 13'h100));
+        emit(fld(FA1, ZERO, 13'h108));
+        emit(fdiv(FA2, FA0, FA1, 1'b1, RM_RNE));
+        emit(addi(A1, ZERO, 13'd1));
+        emit(addi(A2, ZERO, 13'd2));
+        emit(addi(A3, ZERO, 13'd3));
+        emit(addi(A4, ZERO, 13'd4));
+        emit(fdiv(FA3, FA1, FA0, 1'b1, RM_RNE));
+        emit(fld(FA3, ZERO, 13'h110));
+        emit(fadd(FA4, FA2, FA3, 1'b1, RM_RNE));
+        emit(fdiv(FA5, FA0, FA1, 1'b1, RM_RNE));
+        emit(fld(FA5, ZERO, 13'h110));
+        emit(fsd(ZERO, FA5, 13'h120));
+        emit_halt();
+        run(1500);
+        check("independent addi (a1)", gpr(7), 64'd1);
+        check("independent addi (a4)", gpr(10), 64'd4);
+        check("integer ops retired while FP divide in flight", (fpu_overlap > 3) ? 64'd1 : 64'd0, 64'd1);
+        check("fdiv result", fpr(2), 64'h3FE5_5555_5555_5555);
+        check("younger fld wins over older fdiv (WAW)", fpr(3), 64'h4010_0000_0000_0000);
+        check("consumer of fdiv result and younger fld", fpr(4), 64'h4012_AAAA_AAAA_AAAB);
+        check("fsd of WAW winner", dmem[36], 64'h4010_0000_0000_0000);
+        check("four FP operations dispatched", xlen_t'(fpu_dispatches), 64'd4);
+    endtask
+
+    task automatic test_fp_stalls(bit slow);
+        $display("Test 37 -- FP load-use and FP ops held in EX across memory stalls (slow=%0d):", slow);
+        begin_test();
+        dmem[32] = 64'h3FF8_0000_0000_0000;
+        dmem[33] = 64'h4002_0000_0000_0000;
+        dmem[40] = 64'h4010_0000_0000_0000;
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit(fld(FA0, ZERO, 13'h100));
+        emit(fld(FA1, ZERO, 13'h108));
+        emit(fadd(FA2, FA0, FA1, 1'b1, RM_RNE));
+        emit(fsd(ZERO, FA2, 13'h120));
+        emit(fld(FA3, ZERO, 13'h140));
+        emit(fmul(FA4, FA2, FA0, 1'b1, RM_RNE));
+        emit(fdiv(FA5, FA4, FA3, 1'b1, RM_RNE));
+        emit(fsd(ZERO, FA5, 13'h128));
+        emit_halt();
+        slow_mem = slow;
+        run(slow ? 2000 : 900);
+        check("load-use FP consumer (f2 = 3.75)", fpr(2), 64'h400E_0000_0000_0000);
+        check("fsd data forwarded from FP result", dmem[36], 64'h400E_0000_0000_0000);
+        check("fmul behind stalled fld (f4)", fpr(4), 64'h4016_8000_0000_0000);
+        check("fdiv consumes load and mul (f5)", fpr(5), 64'h3FF6_8000_0000_0000);
+        check("fsd of fdiv result", dmem[37], 64'h3FF6_8000_0000_0000);
+        check("each FP op dispatched exactly once", xlen_t'(fpu_dispatches), 64'd3);
+    endtask
+
+    task automatic test_fp_illegal();
+        $display("Test 38 -- reserved FP encodings are illegal instructions:");
+        begin_test();
+        emit_init(0);
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit_fault(r_type(OPC_FOP, FA0, 3'b111, FA0, FA0, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FOP, FA0, 3'b000, FA0, FA0, 8'h0B), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FOP, FA0, 3'b100, FA0, FA1, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FOP, FA0, 3'b101, FA0, FA0, 8'h03), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FOP, FA0, 3'b000, FA0, FA0, 8'h11), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FCMP, A0, 3'b110, FA0, FA0, 8'h00), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FCMP, A0, 3'b001, FA0, FA0, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(fcvt(3'b101, FA0, FA0, 8'h00), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(fcvt(3'b000, FA0, FA0, 8'h02), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(fcvt(3'b010, A0, FA0, 8'h20), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FCVT, A0, 3'b010, FA0, FA1, 8'h00), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(i_type(OPC_FLOAD, FA0, 3'b010, ZERO, 13'd0), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(s_type(OPC_FSTORE, 3'b010, ZERO, FA0, 13'd0), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FSGNJ, FA0, 3'b100, FA0, FA0, 8'h00), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FSGNJ, A0, 3'b011, FA0, FA1, 8'h00), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FSGNJ, FA0, 3'b000, FA0, FA0, 8'h02), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FMV, A0, 3'b100, FA0, ZERO, 8'h00), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FMV, A0, 3'b000, FA0, ZERO, 8'h01), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit_fault(r_type(OPC_FMADD, FA0, 3'b100, FA0, FA0, {3'b110, 5'd0}), CAUSE_ILLEGAL_INSTR, 64'h0C);
+        emit(csrrs(S3, CSR_TSTATUS, ZERO));
+        emit(addi(S4, ZERO, 13'h55));
+        emit_halt();
+        load_exc_handler();
+        run(3000);
+        check("illegal FP leaves FS = Clean", gpr(24), 64'h0C);
+        check("end marker reached", gpr(25), 64'h55);
+        check_trap_log();
+    endtask
+
+    task automatic test_fp_trap_in_flight();
+        $display("Test 39 -- FP divide in flight across a trap completes and sets flags:");
+        begin_test();
+        dmem[32] = 64'h3FF8_0000_0000_0000;
+        dmem[33] = 64'h4002_0000_0000_0000;
+        emit_init(0);
+        emit(csrrsi(ZERO, CSR_TSTATUS, 5'd8));
+        emit(fld(FA0, ZERO, 13'h100));
+        emit(fld(FA1, ZERO, 13'h108));
+        emit(fdiv(FA2, FA0, FA1, 1'b1, RM_RNE));
+        emit_fault(ecall(), CAUSE_ECALL_S, 64'h14);
+        emit(csrrs(A0, CSR_FCSR, ZERO));
+        emit(fmv(3'b010, A1, FA2));
+        emit(addi(S4, ZERO, 13'h55));
+        emit_halt();
+        load_exc_handler();
+        run(1500);
+        check("fflags NX from the in-flight divide", gpr(6), 64'h08);
+        check("divide result survived the trap", gpr(7), 64'h3FE5_5555_5555_5555);
+        check("end marker reached", gpr(25), 64'h55);
+        check_trap_log();
+    endtask
+
     initial begin
         for (int i = 0; i < 4096; i++) begin
             imem[i] = i_type(OPC_OP_IMM, 5'd0, 3'b000, 5'd0, 13'd0);
@@ -1252,6 +1643,15 @@ module tb_core;
         test_stall_muldiv_once(1'b1);
         test_muldiv_waw(1'b0);
         test_muldiv_waw(1'b1);
+        test_fp_loadstore();
+        test_fp_arith();
+        test_fp_int_interplay();
+        test_fp_flags_rm();
+        test_fp_overlap();
+        test_fp_stalls(1'b0);
+        test_fp_stalls(1'b1);
+        test_fp_illegal();
+        test_fp_trap_in_flight();
 
         $display("================================================");
         if (errors == 0) begin

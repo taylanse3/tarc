@@ -225,6 +225,71 @@ package tarc_pkg;
         IMM_NONE
     } imm_sel_e;
 
+    typedef enum logic [2:0] {
+        FRM_RNE = 3'b000,
+        FRM_RTZ = 3'b001,
+        FRM_RDN = 3'b010,
+        FRM_RUP = 3'b011,
+        FRM_RMM = 3'b100,
+        FRM_DYN = 3'b111
+    } fp_rm_e;
+
+    typedef enum logic [1:0] {
+        FPK_FINITE = 2'd0,
+        FPK_ZERO = 2'd1,
+        FPK_INF = 2'd2,
+        FPK_NAN = 2'd3
+    } fp_kind_e;
+
+    typedef enum logic [4:0] {
+        FPU_ADD = 5'd0,
+        FPU_SUB = 5'd1,
+        FPU_MUL = 5'd2,
+        FPU_DIV = 5'd3,
+        FPU_SQRT = 5'd4,
+        FPU_MIN = 5'd5,
+        FPU_MAX = 5'd6,
+        FPU_FMADD = 5'd7,
+        FPU_FMSUB = 5'd8,
+        FPU_FNMADD = 5'd9,
+        FPU_FNMSUB = 5'd10,
+        FPU_EQ = 5'd11,
+        FPU_LT = 5'd12,
+        FPU_LE = 5'd13,
+        FPU_CVT_F2F = 5'd14,
+        FPU_CVT_F2I = 5'd15,
+        FPU_CVT_I2F = 5'd16,
+        FPU_SGNJ = 5'd17,
+        FPU_SGNJN = 5'd18,
+        FPU_SGNJX = 5'd19,
+        FPU_CLASS = 5'd20,
+        FPU_MV_X_W = 5'd21,
+        FPU_MV_W_X = 5'd22,
+        FPU_MV_X_D = 5'd23,
+        FPU_MV_D_X = 5'd24
+    } fpu_op_e;
+
+    typedef struct packed {
+        logic sign;
+        logic zero;
+        logic sub;
+        logic inf;
+        logic nan;
+        logic snan;
+        logic signed [15:0] exp;
+        logic [52:0] mant;
+    } fp_unpacked_t;
+
+    typedef struct packed {
+        fp_kind_e kind;
+        logic sign;
+        logic nv;
+        logic dz;
+        logic signed [15:0] exp;
+        logic [127:0] sig;
+        logic stk;
+    } fp_pre_t;
+
     typedef struct packed {
         xlen_t pc;
         instr_t instr;
@@ -265,6 +330,14 @@ package tarc_pkg;
         csr_funct3_e csr_kind;
         logic is_system;
         system_funct3_e system_kind;
+        greg_t rs3;
+        xlen_t fp1_data, fp2_data, fp3_data;
+        logic reads_fp1, reads_fp2, reads_fp3;
+        regfile_e fu_rd_rf;
+        fpu_op_e fpu_op;
+        logic fp_src_dbl, fp_dst_dbl;
+        logic [2:0] fp_rm;
+        logic fp_int64, fp_uns;
     } id_ex_t;
 
     typedef struct packed {

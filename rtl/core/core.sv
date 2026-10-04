@@ -56,6 +56,13 @@ module core #(
 
     logic csr_access, csr_illegal, priv_s;
     xlen_t csr_rdata, tvec, tepc;
+    logic [2:0] frm;
+
+    logic fpu_valid, fpu_busy, fpu_dirty;
+    regfile_e fpu_rd_rf, fpu_pending_rf;
+    logic [4:0] fpu_rd, fpu_flags;
+    greg_t fpu_pending_rd;
+    xlen_t fpu_result;
     logic fs_off, vs_off;
     logic irq_any_pending, irq_pending, irq_enabled;
     irq_cause_e irq_cause;
@@ -99,9 +106,11 @@ module core #(
         .mem_ready(imem_ready)
     );
 
-    greg_t rs1_addr, rs2_addr;
+    greg_t rs1_addr, rs2_addr, rs3_addr;
     xlen_t rs1_data_raw, rs2_data_raw;
-    logic d_reads_rs1, d_reads_rs2, d_is_csr_write;
+    xlen_t fp1_data_raw, fp2_data_raw, fp3_data_raw;
+    logic d_reads_rs1, d_reads_rs2, d_is_csr_write, d_is_fcsr_access;
+    logic d_reads_fp1, d_reads_fp2, d_reads_fp3;
     fu_tag_e d_fu;
 
     logic int_we;
@@ -120,19 +129,45 @@ module core #(
         .rd_data(int_wdata)
     );
 
+    logic fp_we;
+    greg_t fp_waddr;
+    xlen_t fp_wdata;
+
+    regfile_fp u_regfile_fp (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rs1_addr(rs1_addr),
+        .rs1_data(fp1_data_raw),
+        .rs2_addr(rs2_addr),
+        .rs2_data(fp2_data_raw),
+        .rs3_addr(rs3_addr),
+        .rs3_data(fp3_data_raw),
+        .we(fp_we),
+        .rd_addr(fp_waddr),
+        .rd_data(fp_wdata)
+    );
+
     decode u_decode (
         .if_id(if_id),
         .fs_off(fs_off),
         .vs_off(vs_off),
         .rs1_addr(rs1_addr),
         .rs2_addr(rs2_addr),
+        .rs3_addr(rs3_addr),
         .rs1_data_raw(rs1_data_raw),
         .rs2_data_raw(rs2_data_raw),
+        .fp1_data_raw(fp1_data_raw),
+        .fp2_data_raw(fp2_data_raw),
+        .fp3_data_raw(fp3_data_raw),
         .id_ex(id_ex_d),
         .hz_reads_rs1(d_reads_rs1),
         .hz_reads_rs2(d_reads_rs2),
+        .hz_reads_fp1(d_reads_fp1),
+        .hz_reads_fp2(d_reads_fp2),
+        .hz_reads_fp3(d_reads_fp3),
         .hz_fu(d_fu),
-        .hz_is_csr_write(d_is_csr_write)
+        .hz_is_csr_write(d_is_csr_write),
+        .hz_is_fcsr_access(d_is_fcsr_access)
     );
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -153,6 +188,8 @@ module core #(
 
     xlen_t ex_rs1_fwd, ex_rs2_fwd;
     logic ex_rs1_use_fwd, ex_rs2_use_fwd;
+    xlen_t ex_fp1_fwd, ex_fp2_fwd, ex_fp3_fwd;
+    logic ex_fp1_use_fwd, ex_fp2_use_fwd, ex_fp3_use_fwd;
 
     always_comb begin
         id_ex_hold = id_ex_q;
@@ -162,6 +199,15 @@ module core #(
         if (ex_rs2_use_fwd && id_ex_q.reads_rs2) begin
             id_ex_hold.rs2_data = ex_rs2_fwd;
         end
+        if (ex_fp1_use_fwd && id_ex_q.reads_fp1) begin
+            id_ex_hold.fp1_data = ex_fp1_fwd;
+        end
+        if (ex_fp2_use_fwd && id_ex_q.reads_fp2) begin
+            id_ex_hold.fp2_data = ex_fp2_fwd;
+        end
+        if (ex_fp3_use_fwd && id_ex_q.reads_fp3) begin
+            id_ex_hold.fp3_data = ex_fp3_fwd;
+        end
     end
 
     execute u_execute (
@@ -170,6 +216,8 @@ module core #(
         .rs2_fwd_data(ex_rs2_fwd),
         .rs1_use_fwd(ex_rs1_use_fwd),
         .rs2_use_fwd(ex_rs2_use_fwd),
+        .fp2_fwd_data(ex_fp2_fwd),
+        .fp2_use_fwd(ex_fp2_use_fwd),
         .ex_mem(ex_mem_d),
         .branch_mispredict(branch_mispredict),
         .branch_target(branch_target)
@@ -254,12 +302,16 @@ module core #(
         .trap_cause(trap_cause),
         .trap_tval(trap_tval),
         .sret_commit(sret_valid),
+        .fflags_en(fpu_valid && fpu_grant),
+        .fflags_set(fpu_flags),
+        .fs_dirty(fpu_dirty || (mem_wb_d.valid && mem_wb_d.reg_write && (mem_wb_d.rd_rf == RF_FP))),
         .irq_software(irq_software),
         .irq_timer(irq_timer),
         .irq_external(irq_external),
         .priv_s(priv_s),
         .tvec(tvec),
         .tepc(tepc),
+        .frm(frm),
         .fs_off(fs_off),
         .vs_off(vs_off),
         .irq_any_pending(irq_any_pending),
@@ -281,9 +333,9 @@ module core #(
     logic muldiv_valid, muldiv_busy;
     greg_t muldiv_rd, muldiv_pending_rd;
     xlen_t muldiv_result;
-    logic fp_we, vecrf_we;
-    logic [4:0] fp_waddr, vecrf_waddr;
-    xlen_t fp_wdata, vecrf_wdata;
+    logic vecrf_we;
+    logic [4:0] vecrf_waddr;
+    xlen_t vecrf_wdata;
     logic muldiv_grant, fpu_grant, vec_grant;
 
     muldiv u_muldiv (
@@ -304,16 +356,43 @@ module core #(
         .muldiv_pending_rd(muldiv_pending_rd)
     );
 
+    fpu u_fpu (
+        .clk(clk),
+        .rst_n(rst_n),
+        .id_ex(id_ex_q),
+        .rs1_fwd_data(ex_rs1_fwd),
+        .rs1_use_fwd(ex_rs1_use_fwd),
+        .fp1_fwd_data(ex_fp1_fwd),
+        .fp2_fwd_data(ex_fp2_fwd),
+        .fp3_fwd_data(ex_fp3_fwd),
+        .fp1_use_fwd(ex_fp1_use_fwd),
+        .fp2_use_fwd(ex_fp2_use_fwd),
+        .fp3_use_fwd(ex_fp3_use_fwd),
+        .frm(frm),
+        .trap_flush(trap_flush),
+        .mem_stall(mem_stall),
+        .fpu_grant(fpu_grant),
+        .fpu_valid(fpu_valid),
+        .fpu_rd_rf(fpu_rd_rf),
+        .fpu_rd(fpu_rd),
+        .fpu_result(fpu_result),
+        .fpu_flags(fpu_flags),
+        .fpu_busy(fpu_busy),
+        .fpu_pending_rf(fpu_pending_rf),
+        .fpu_pending_rd(fpu_pending_rd),
+        .fpu_dirty(fpu_dirty)
+    );
+
     writeback u_writeback (
         .mem_wb(mem_wb_q),
         .muldiv_valid(muldiv_valid),
         .muldiv_rd(muldiv_rd),
         .muldiv_result(muldiv_result),
         .muldiv_grant(muldiv_grant),
-        .fpu_valid(1'b0),
-        .fpu_rd_rf(RF_NONE),
-        .fpu_rd('0),
-        .fpu_result('0),
+        .fpu_valid(fpu_valid),
+        .fpu_rd_rf(fpu_rd_rf),
+        .fpu_rd(fpu_rd),
+        .fpu_result(fpu_result),
         .fpu_grant(fpu_grant),
         .vec_valid(1'b0),
         .vec_rd_rf(RF_NONE),
@@ -338,6 +417,11 @@ module core #(
         .ex_reads_rs1(id_ex_q.valid && id_ex_q.reads_rs1),
         .ex_reads_rs2(id_ex_q.valid && id_ex_q.reads_rs2),
         .ex_rd(id_ex_q.rd),
+        .ex_rd_rf(id_ex_q.rd_rf),
+        .ex_rs3(id_ex_q.rs3),
+        .ex_reads_fp1(id_ex_q.valid && id_ex_q.reads_fp1),
+        .ex_reads_fp2(id_ex_q.valid && id_ex_q.reads_fp2),
+        .ex_reads_fp3(id_ex_q.valid && id_ex_q.reads_fp3),
         .ex_result_late(id_ex_q.is_load || id_ex_q.is_csr),
         .mem_valid(ex_mem_q.valid),
         .mem_reg_write(ex_mem_q.reg_write),
@@ -356,15 +440,23 @@ module core #(
         .d_valid(if_id.valid),
         .d_rs1(rs1_addr),
         .d_rs2(rs2_addr),
+        .d_rs3(rs3_addr),
         .d_rd(id_ex_d.rd),
         .d_rd_rf(id_ex_d.rd_rf),
+        .d_fu_rd_rf(id_ex_d.fu_rd_rf),
         .d_reads_rs1(d_reads_rs1),
         .d_reads_rs2(d_reads_rs2),
+        .d_reads_fp1(d_reads_fp1),
+        .d_reads_fp2(d_reads_fp2),
+        .d_reads_fp3(d_reads_fp3),
         .d_fu(d_fu),
         .d_is_csr_write(d_is_csr_write),
+        .d_is_fcsr_access(d_is_fcsr_access),
         .muldiv_busy(muldiv_busy),
         .muldiv_pending_rd(muldiv_pending_rd),
-        .fpu_busy(1'b0),
+        .fpu_busy(fpu_busy),
+        .fpu_pending_rf(fpu_pending_rf),
+        .fpu_pending_rd(fpu_pending_rd),
         .vec_busy(1'b0),
         .csr_drain_active(
             (id_ex_q.valid && id_ex_q.is_csr_write) || (ex_mem_q.valid && ex_mem_q.is_csr_write)
@@ -374,6 +466,12 @@ module core #(
         .ex_rs2_fwd_data(ex_rs2_fwd),
         .ex_rs1_use_fwd(ex_rs1_use_fwd),
         .ex_rs2_use_fwd(ex_rs2_use_fwd),
+        .ex_fp1_fwd_data(ex_fp1_fwd),
+        .ex_fp2_fwd_data(ex_fp2_fwd),
+        .ex_fp3_fwd_data(ex_fp3_fwd),
+        .ex_fp1_use_fwd(ex_fp1_use_fwd),
+        .ex_fp2_use_fwd(ex_fp2_use_fwd),
+        .ex_fp3_use_fwd(ex_fp3_use_fwd),
         .stall_f(stall_f_hz),
         .stall_d(stall_d_hz),
         .flush_d(flush_d)

@@ -8,15 +8,23 @@ module decode (
 
     output greg_t rs1_addr,
     output greg_t rs2_addr,
+    output greg_t rs3_addr,
     input xlen_t rs1_data_raw,
     input xlen_t rs2_data_raw,
+    input xlen_t fp1_data_raw,
+    input xlen_t fp2_data_raw,
+    input xlen_t fp3_data_raw,
 
     output id_ex_t id_ex,
 
     output logic hz_reads_rs1,
     output logic hz_reads_rs2,
+    output logic hz_reads_fp1,
+    output logic hz_reads_fp2,
+    output logic hz_reads_fp3,
     output fu_tag_e hz_fu,
-    output logic hz_is_csr_write
+    output logic hz_is_csr_write,
+    output logic hz_is_fcsr_access
 );
 
     opcode_e op;
@@ -28,6 +36,7 @@ module decode (
     assign rem = if_id.instr[31:24];
     assign rs1_addr = if_id.instr[18:14];
     assign rs2_addr = if_id.instr[23:19];
+    assign rs3_addr = if_id.instr[28:24];
 
     greg_t rd_field;
     assign rd_field = if_id.instr[10:6];
@@ -68,6 +77,16 @@ module decode (
         endcase
     end
 
+    logic fp_opcode;
+    assign fp_opcode = (op == OPC_FMADD) || (op == OPC_FOP) || (op == OPC_FCMP)
+        || (op == OPC_FCVT) || (op == OPC_FLOAD) || (op == OPC_FSTORE)
+        || (op == OPC_FSGNJ) || (op == OPC_FMV);
+
+    logic rm_fop_bad, rm_fmadd_bad, rm_fcvt_bad;
+    assign rm_fop_bad = (rem[3:1] == 3'b101) || (rem[3:1] == 3'b110);
+    assign rm_fmadd_bad = (rem[7:5] == 3'b101) || (rem[7:5] == 3'b110);
+    assign rm_fcvt_bad = (rem[4:2] == 3'b101) || (rem[4:2] == 3'b110);
+
     logic csr_imm_form;
     assign csr_imm_form = (funct3 == F3_CSRRWI) || (funct3 == F3_CSRRSI) || (funct3 == F3_CSRRCI);
 
@@ -91,6 +110,11 @@ module decode (
         id_ex.rd_rf = RF_NONE;
         id_ex.pred_taken = if_id.pred_taken;
         id_ex.pred_target = if_id.pred_target;
+        id_ex.rs3 = rs3_addr;
+        id_ex.fp1_data = fp1_data_raw;
+        id_ex.fp2_data = fp2_data_raw;
+        id_ex.fp3_data = fp3_data_raw;
+        id_ex.fu_rd_rf = RF_NONE;
 
         id_ex.fault_valid = if_id.fault_valid;
         id_ex.fault_cause = if_id.fault_cause;
@@ -98,7 +122,11 @@ module decode (
 
         hz_reads_rs1 = 1'b0;
         hz_reads_rs2 = 1'b0;
+        hz_reads_fp1 = 1'b0;
+        hz_reads_fp2 = 1'b0;
+        hz_reads_fp3 = 1'b0;
         hz_is_csr_write = 1'b0;
+        hz_is_fcsr_access = 1'b0;
 
         illegal = 1'b0;
         illegal_cause = CAUSE_ILLEGAL_INSTR;
@@ -106,6 +134,9 @@ module decode (
         if (if_id.valid && !if_id.fault_valid) begin
             if (illegal_opcode) begin
                 illegal = 1'b1;
+            end else if (fp_opcode && fs_off) begin
+                illegal = 1'b1;
+                illegal_cause = CAUSE_FP_DISABLED;
             end else begin
                 unique case (op)
 
@@ -250,6 +281,7 @@ module decode (
                             id_ex.rs1_data = {59'b0, rs1_addr};
                         end
                         hz_is_csr_write = csr_writes;
+                        hz_is_fcsr_access = (if_id.instr[30:19] == CSR_FCSR);
                         if (funct3 == 3'b000 || funct3 == 3'b100 || if_id.instr[31]) begin
                             illegal = 1'b1;
                         end
@@ -260,17 +292,198 @@ module decode (
                         hz_reads_rs2 = 1'b1;
                         id_ex.fu = FU_MULDIV;
                         id_ex.rd_rf = RF_NONE;
+                        id_ex.fu_rd_rf = RF_INT;
                         id_ex.muldiv_kind = muldiv_funct3_e'(funct3);
                     end
 
-                    OPC_FMADD, OPC_FOP, OPC_FCMP, OPC_FCVT, OPC_FLOAD, OPC_FSTORE,
-                    OPC_FSGNJ, OPC_FMV: begin
-                        hz_reads_rs1 = 1'b1;
-                        hz_reads_rs2 = 1'b1;
+                    OPC_FMADD: begin
+                        hz_reads_fp1 = 1'b1;
+                        hz_reads_fp2 = 1'b1;
+                        hz_reads_fp3 = 1'b1;
                         id_ex.fu = FU_FPU;
+                        id_ex.fu_rd_rf = RF_FP;
+                        id_ex.fp_src_dbl = funct3[2];
+                        id_ex.fp_dst_dbl = funct3[2];
+                        id_ex.fp_rm = rem[7:5];
+                        unique case (funct3[1:0])
+                            2'b00: id_ex.fpu_op = FPU_FMADD;
+                            2'b01: id_ex.fpu_op = FPU_FMSUB;
+                            2'b10: id_ex.fpu_op = FPU_FNMADD;
+                            2'b11: id_ex.fpu_op = FPU_FNMSUB;
+                        endcase
+                        if (rm_fmadd_bad) begin
+                            illegal = 1'b1;
+                        end
+                    end
+
+                    OPC_FOP: begin
+                        hz_reads_fp1 = 1'b1;
+                        hz_reads_fp2 = (funct3 != 3'b100);
+                        id_ex.fu = FU_FPU;
+                        id_ex.fu_rd_rf = RF_FP;
+                        id_ex.fp_src_dbl = rem[0];
+                        id_ex.fp_dst_dbl = rem[0];
+                        id_ex.fp_rm = rem[3:1];
+                        unique case (funct3)
+                            3'b000: id_ex.fpu_op = FPU_ADD;
+                            3'b001: id_ex.fpu_op = FPU_SUB;
+                            3'b010: id_ex.fpu_op = FPU_MUL;
+                            3'b011: id_ex.fpu_op = FPU_DIV;
+                            3'b100: id_ex.fpu_op = FPU_SQRT;
+                            3'b101: id_ex.fpu_op = FPU_MIN;
+                            3'b110: id_ex.fpu_op = FPU_MAX;
+                            default: illegal = 1'b1;
+                        endcase
+                        if (rem[7:4] != 4'b0) begin
+                            illegal = 1'b1;
+                        end
+                        if (funct3 == 3'b100 && rs2_addr != '0) begin
+                            illegal = 1'b1;
+                        end
+                        if ((funct3 == 3'b101 || funct3 == 3'b110) ? (rem[3:1] != 3'b000) : rm_fop_bad) begin
+                            illegal = 1'b1;
+                        end
+                    end
+
+                    OPC_FCMP: begin
+                        hz_reads_fp1 = 1'b1;
+                        hz_reads_fp2 = 1'b1;
+                        id_ex.fu = FU_FPU;
+                        id_ex.fu_rd_rf = RF_INT;
+                        id_ex.fp_src_dbl = funct3[0];
+                        id_ex.fp_dst_dbl = funct3[0];
+                        unique case (funct3[2:1])
+                            2'b00: id_ex.fpu_op = FPU_EQ;
+                            2'b01: id_ex.fpu_op = FPU_LT;
+                            2'b10: id_ex.fpu_op = FPU_LE;
+                            default: illegal = 1'b1;
+                        endcase
+                        if (rem != 8'b0) begin
+                            illegal = 1'b1;
+                        end
+                    end
+
+                    OPC_FCVT: begin
+                        id_ex.fu = FU_FPU;
+                        id_ex.fp_rm = rem[4:2];
+                        id_ex.fp_int64 = rem[0];
+                        id_ex.fp_uns = rem[1];
+                        unique case (funct3)
+                            3'b000: begin
+                                hz_reads_fp1 = 1'b1;
+                                id_ex.fu_rd_rf = RF_FP;
+                                id_ex.fpu_op = FPU_CVT_F2F;
+                                id_ex.fp_src_dbl = rem[0];
+                                id_ex.fp_dst_dbl = !rem[0];
+                                if (rem[1] || (rem[0] && rm_fcvt_bad)) begin
+                                    illegal = 1'b1;
+                                end
+                            end
+                            3'b001, 3'b010: begin
+                                hz_reads_fp1 = 1'b1;
+                                id_ex.fu_rd_rf = RF_INT;
+                                id_ex.fpu_op = FPU_CVT_F2I;
+                                id_ex.fp_src_dbl = (funct3 == 3'b010);
+                                if (rm_fcvt_bad) begin
+                                    illegal = 1'b1;
+                                end
+                            end
+                            3'b011, 3'b100: begin
+                                hz_reads_rs1 = 1'b1;
+                                id_ex.fu_rd_rf = RF_FP;
+                                id_ex.fpu_op = FPU_CVT_I2F;
+                                id_ex.fp_dst_dbl = (funct3 == 3'b100);
+                                if (rm_fcvt_bad) begin
+                                    illegal = 1'b1;
+                                end
+                            end
+                            default: illegal = 1'b1;
+                        endcase
+                        if (rem[7:5] != 3'b0 || rs2_addr != '0) begin
+                            illegal = 1'b1;
+                        end
+                    end
+
+                    OPC_FLOAD: begin
+                        hz_reads_rs1 = 1'b1;
+                        id_ex.fu = FU_MAIN;
                         id_ex.rd_rf = RF_FP;
-                        illegal = 1'b1;
-                        illegal_cause = fs_off ? CAUSE_FP_DISABLED : CAUSE_ILLEGAL_INSTR;
+                        id_ex.alu_op = ALU_ADD;
+                        id_ex.rs2_data = imm_i;
+                        id_ex.is_load = 1'b1;
+                        unique case (funct3)
+                            3'b000: id_ex.mem_size = 2'b10;
+                            3'b001: id_ex.mem_size = 2'b11;
+                            default: illegal = 1'b1;
+                        endcase
+                    end
+
+                    OPC_FSTORE: begin
+                        hz_reads_rs1 = 1'b1;
+                        hz_reads_fp2 = 1'b1;
+                        id_ex.fu = FU_MAIN;
+                        id_ex.rd_rf = RF_NONE;
+                        id_ex.alu_op = ALU_ADD;
+                        id_ex.imm = imm_s;
+                        id_ex.is_store = 1'b1;
+                        unique case (funct3)
+                            3'b000: id_ex.mem_size = 2'b10;
+                            3'b001: id_ex.mem_size = 2'b11;
+                            default: illegal = 1'b1;
+                        endcase
+                    end
+
+                    OPC_FSGNJ: begin
+                        hz_reads_fp1 = 1'b1;
+                        hz_reads_fp2 = (funct3 != 3'b011);
+                        id_ex.fu = FU_FPU;
+                        id_ex.fu_rd_rf = (funct3 == 3'b011) ? RF_INT : RF_FP;
+                        id_ex.fp_src_dbl = rem[0];
+                        id_ex.fp_dst_dbl = rem[0];
+                        unique case (funct3)
+                            3'b000: id_ex.fpu_op = FPU_SGNJ;
+                            3'b001: id_ex.fpu_op = FPU_SGNJN;
+                            3'b010: id_ex.fpu_op = FPU_SGNJX;
+                            3'b011: id_ex.fpu_op = FPU_CLASS;
+                            default: illegal = 1'b1;
+                        endcase
+                        if (funct3 == 3'b011) begin
+                            if (rem != 8'b0 || rs2_addr != '0) begin
+                                illegal = 1'b1;
+                            end
+                        end else if (rem[7:1] != 7'b0) begin
+                            illegal = 1'b1;
+                        end
+                    end
+
+                    OPC_FMV: begin
+                        id_ex.fu = FU_FPU;
+                        unique case (funct3)
+                            3'b000: begin
+                                hz_reads_fp1 = 1'b1;
+                                id_ex.fu_rd_rf = RF_INT;
+                                id_ex.fpu_op = FPU_MV_X_W;
+                            end
+                            3'b001: begin
+                                hz_reads_rs1 = 1'b1;
+                                id_ex.fu_rd_rf = RF_FP;
+                                id_ex.fpu_op = FPU_MV_W_X;
+                            end
+                            3'b010: begin
+                                hz_reads_fp1 = 1'b1;
+                                id_ex.fu_rd_rf = RF_INT;
+                                id_ex.fpu_op = FPU_MV_X_D;
+                            end
+                            3'b011: begin
+                                hz_reads_rs1 = 1'b1;
+                                id_ex.fu_rd_rf = RF_FP;
+                                id_ex.fpu_op = FPU_MV_D_X;
+                            end
+                            default: illegal = 1'b1;
+                        endcase
+                        if (rem != 8'b0 || rs2_addr != '0) begin
+                            illegal = 1'b1;
+                        end
                     end
 
                     OPC_VCFG, OPC_VIOP, OPC_VMUL, OPC_VFOP, OPC_VFMACC, OPC_VCMP,
@@ -318,12 +531,19 @@ module decode (
                 id_ex.fault_tval = '0;
                 hz_reads_rs1 = 1'b0;
                 hz_reads_rs2 = 1'b0;
+                hz_reads_fp1 = 1'b0;
+                hz_reads_fp2 = 1'b0;
+                hz_reads_fp3 = 1'b0;
                 hz_is_csr_write = 1'b0;
+                hz_is_fcsr_access = 1'b0;
             end
         end
 
         id_ex.reads_rs1 = hz_reads_rs1;
         id_ex.reads_rs2 = hz_reads_rs2;
+        id_ex.reads_fp1 = hz_reads_fp1;
+        id_ex.reads_fp2 = hz_reads_fp2;
+        id_ex.reads_fp3 = hz_reads_fp3;
         hz_fu = id_ex.fu;
     end
 

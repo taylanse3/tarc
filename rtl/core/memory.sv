@@ -104,7 +104,9 @@ module memory (
             2'b01: load_result = ex_mem.mem_unsigned
                 ? {48'b0, dmem_rdata[15:0]}
                 : {{48{dmem_rdata[15]}}, dmem_rdata[15:0]};
-            2'b10: load_result = ex_mem.mem_unsigned
+            2'b10: load_result = (ex_mem.rd_rf == RF_FP)
+                ? {32'hFFFF_FFFF, dmem_rdata[31:0]}
+                : ex_mem.mem_unsigned
                 ? {32'b0, dmem_rdata[31:0]}
                 : {{32{dmem_rdata[31]}}, dmem_rdata[31:0]};
             2'b11: load_result = dmem_rdata;

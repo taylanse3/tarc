@@ -20,6 +20,10 @@ module csr #(
     input xlen_t trap_tval,
     input logic sret_commit,
 
+    input logic fflags_en,
+    input logic [4:0] fflags_set,
+    input logic fs_dirty,
+
     input logic irq_software,
     input logic irq_timer,
     input logic irq_external,
@@ -27,6 +31,7 @@ module csr #(
     output logic priv_s,
     output xlen_t tvec,
     output xlen_t tepc,
+    output logic [2:0] frm,
     output logic fs_off,
     output logic vs_off,
     output logic irq_any_pending,
@@ -157,50 +162,60 @@ module csr #(
             frm_q <= 3'b000;
             fflags_q <= 5'b00000;
             vstart_q <= '0;
-        end else if (trap_enter) begin
-            tepc_q <= trap_epc;
-            tcause_q <= trap_cause;
-            tval_q <= trap_tval;
-            pp_q <= priv_s_q;
-            priv_s_q <= 1'b1;
-            pie_q <= ie_q;
-            ie_q <= 1'b0;
-        end else if (sret_commit) begin
-            priv_s_q <= pp_q;
-            ie_q <= pie_q;
-        end else if (write_en) begin
-            unique case (access_addr)
-                CSR_TSTATUS: begin
-                    ie_q <= new_val[0];
-                    pie_q <= new_val[1];
-                    pp_q <= new_val[2];
-                    if (new_val[4:3] != 2'b11) begin
-                        fs_q <= new_val[4:3];
+        end else begin
+            if (trap_enter) begin
+                tepc_q <= trap_epc;
+                tcause_q <= trap_cause;
+                tval_q <= trap_tval;
+                pp_q <= priv_s_q;
+                priv_s_q <= 1'b1;
+                pie_q <= ie_q;
+                ie_q <= 1'b0;
+            end else if (sret_commit) begin
+                priv_s_q <= pp_q;
+                ie_q <= pie_q;
+            end else if (write_en) begin
+                unique case (access_addr)
+                    CSR_TSTATUS: begin
+                        ie_q <= new_val[0];
+                        pie_q <= new_val[1];
+                        pp_q <= new_val[2];
+                        if (new_val[4:3] != 2'b11) begin
+                            fs_q <= new_val[4:3];
+                        end
+                        if (new_val[6:5] != 2'b11) begin
+                            vs_q <= new_val[6:5];
+                        end
                     end
-                    if (new_val[6:5] != 2'b11) begin
-                        vs_q <= new_val[6:5];
+                    CSR_TIE: tie_q <= new_val[2:0];
+                    CSR_TIP: tip_sw_q <= tip_new_val[2:0];
+                    CSR_TVEC: tvec_q <= {new_val[63:2], 2'b00};
+                    CSR_TSCRATCH: tscratch_q <= new_val;
+                    CSR_TEPC: tepc_q <= new_val;
+                    CSR_SATP: begin
+                        if (new_val[3:0] <= 4'd1) begin
+                            satp_q <= {8'b0, new_val[55:0]};
+                        end
                     end
-                end
-                CSR_TIE: tie_q <= new_val[2:0];
-                CSR_TIP: tip_sw_q <= tip_new_val[2:0];
-                CSR_TVEC: tvec_q <= {new_val[63:2], 2'b00};
-                CSR_TSCRATCH: tscratch_q <= new_val;
-                CSR_TEPC: tepc_q <= new_val;
-                CSR_SATP: begin
-                    if (new_val[3:0] <= 4'd1) begin
-                        satp_q <= {8'b0, new_val[55:0]};
+                    CSR_FCSR: begin
+                        fflags_q <= new_val[7:3];
+                        if (new_val[2:0] <= 3'b100) begin
+                            frm_q <= new_val[2:0];
+                        end
                     end
-                end
-                CSR_FCSR: begin
-                    fflags_q <= new_val[7:3];
-                    if (new_val[2:0] <= 3'b100) begin
-                        frm_q <= new_val[2:0];
+                    CSR_VSTART: vstart_q <= new_val[$clog2(VLEN)-1:0];
+                    default: begin
                     end
-                end
-                CSR_VSTART: vstart_q <= new_val[$clog2(VLEN)-1:0];
-                default: begin
-                end
-            endcase
+                endcase
+            end
+
+            if (fflags_en) begin
+                fflags_q <= fflags_q | fflags_set;
+            end
+
+            if (fs_dirty && fs_q == FPVEC_CLEAN) begin
+                fs_q <= FPVEC_DIRTY;
+            end
         end
     end
 
@@ -210,6 +225,7 @@ module csr #(
     assign priv_s = priv_s_q;
     assign tvec = tvec_q;
     assign tepc = tepc_q;
+    assign frm = frm_q;
     assign fs_off = (fs_q == 2'b00);
     assign vs_off = (vs_q == 2'b00);
     assign irq_any_pending = |tip_bits;
