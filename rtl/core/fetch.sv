@@ -45,7 +45,7 @@ module fetch #(
     assign is_branch_insn = (imem_rdata[5:0] == OPC_BRANCH);
     assign b_imm_bits = {imem_rdata[31:24], imem_rdata[10:6]};
     assign pred_target = pc_q + {{49{b_imm_bits[12]}}, b_imm_bits, 2'b00};
-    assign pred_taken = is_branch_insn && b_imm_bits[12];
+    assign pred_taken = is_branch_insn && b_imm_bits[12] && !pc_misaligned;
 
     xlen_t pc_next;
     always_comb begin
@@ -77,11 +77,14 @@ module fetch #(
         end
     end
 
-    assign imem_req = !idle_q && !stall;
+    logic fetch_active;
+    assign fetch_active = !idle_q && !stall;
+
+    assign imem_req = fetch_active && !pc_misaligned;
     assign imem_addr = pc_q;
 
     logic fetch_valid;
-    assign fetch_valid = imem_req && imem_ready;
+    assign fetch_valid = fetch_active && (pc_misaligned || imem_ready);
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -91,7 +94,7 @@ module fetch #(
             idle_q <= idle_next;
             if (hart_wake || trap_redirect || sret_redirect || branch_redirect) begin
                 pc_q <= pc_next;
-            end else if (!stall && !idle_q && imem_ready) begin
+            end else if (fetch_valid) begin
                 pc_q <= pc_next;
             end
         end

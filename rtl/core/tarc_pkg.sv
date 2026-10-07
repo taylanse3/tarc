@@ -205,10 +205,10 @@ package tarc_pkg;
     } fu_tag_e;
 
     typedef enum logic [1:0] {
-        RF_INT = 2'd0,
-        RF_FP = 2'd1,
-        RF_VEC = 2'd2,
-        RF_NONE = 2'd3
+        RF_NONE = 2'd0,
+        RF_INT = 2'd1,
+        RF_FP = 2'd2,
+        RF_VEC = 2'd3
     } regfile_e;
 
     typedef enum logic {

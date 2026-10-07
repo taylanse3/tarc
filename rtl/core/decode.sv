@@ -512,6 +512,9 @@ module decode (
                     OPC_TLBINV: begin
                         id_ex.fu = FU_NONE;
                         id_ex.rd_rf = RF_NONE;
+                        if (funct3 != 3'b000 || rd_field != '0 || rem != 8'b0) begin
+                            illegal = 1'b1;
+                        end
                     end
 
                     default: begin
@@ -526,6 +529,7 @@ module decode (
                 id_ex.opcode = op;
                 id_ex.fu = FU_NONE;
                 id_ex.rd_rf = RF_NONE;
+                id_ex.fu_rd_rf = RF_NONE;
                 id_ex.fault_valid = 1'b1;
                 id_ex.fault_cause = illegal_cause;
                 id_ex.fault_tval = '0;

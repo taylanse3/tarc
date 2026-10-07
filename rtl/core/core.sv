@@ -67,6 +67,14 @@ module core #(
     logic irq_any_pending, irq_pending, irq_enabled;
     irq_cause_e irq_cause;
 
+    logic muldiv_valid, muldiv_busy;
+    greg_t muldiv_rd, muldiv_pending_rd;
+    xlen_t muldiv_result;
+    logic vecrf_we;
+    logic [4:0] vecrf_waddr;
+    xlen_t vecrf_wdata;
+    logic muldiv_grant, fpu_grant, vec_grant;
+
     fetch #(
         .RESET_VECTOR(RESET_VECTOR)
     ) u_fetch (
@@ -329,14 +337,6 @@ module core #(
             mem_wb_q <= mem_wb_d;
         end
     end
-
-    logic muldiv_valid, muldiv_busy;
-    greg_t muldiv_rd, muldiv_pending_rd;
-    xlen_t muldiv_result;
-    logic vecrf_we;
-    logic [4:0] vecrf_waddr;
-    xlen_t vecrf_wdata;
-    logic muldiv_grant, fpu_grant, vec_grant;
 
     muldiv u_muldiv (
         .clk(clk),

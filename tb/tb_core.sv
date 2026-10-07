@@ -77,6 +77,33 @@ module tb_core;
         end
     end
 
+    logic imem_wild_seen;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            imem_wild_seen <= 1'b0;
+        end else if (imem_req && imem_addr[63:5] == 59'h100) begin
+            imem_wild_seen <= 1'b1;
+        end
+    end
+
+    int enc_violations;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            enc_violations <= 0;
+        end else begin
+            if ((!dut.id_ex_q.valid || dut.id_ex_q.fault_valid) &&
+                (dut.id_ex_q.rd_rf != RF_NONE || dut.id_ex_q.fu_rd_rf != RF_NONE)) begin
+                enc_violations <= enc_violations + 1;
+            end
+            if ((!dut.ex_mem_q.valid || dut.ex_mem_q.fault_valid) && dut.ex_mem_q.reg_write) begin
+                enc_violations <= enc_violations + 1;
+            end
+            if (!dut.mem_wb_q.valid && dut.mem_wb_q.reg_write) begin
+                enc_violations <= enc_violations + 1;
+            end
+        end
+    end
+
     int imem_beats;
     int dmem_beats;
     int dmem_writes;
@@ -1535,6 +1562,42 @@ module tb_core;
         check_trap_log();
     endtask
 
+    task automatic test_tlbinv();
+        $display("Test 40 -- TLBINV: legal encoding is a no-op, reserved fields are illegal:");
+        begin_test();
+        emit_init(0);
+        emit(r_type(OPC_TLBINV, ZERO, 3'b000, ZERO, ZERO, 8'h00));
+        emit(r_type(OPC_TLBINV, ZERO, 3'b000, A0, A1, 8'h00));
+        emit(addi(S1, ZERO, 13'd7));
+        emit_fault(r_type(OPC_TLBINV, ZERO, 3'b001, ZERO, ZERO, 8'h00), CAUSE_ILLEGAL_INSTR, TS_S);
+        emit_fault(r_type(OPC_TLBINV, A2, 3'b000, ZERO, ZERO, 8'h00), CAUSE_ILLEGAL_INSTR, TS_S);
+        emit_fault(r_type(OPC_TLBINV, ZERO, 3'b000, ZERO, ZERO, 8'h01), CAUSE_ILLEGAL_INSTR, TS_S);
+        emit(addi(S4, ZERO, 13'h55));
+        emit_halt();
+        load_exc_handler();
+        run(800);
+        check("legal TLBINV executed, younger ran (s1 = 7)", gpr(S1), 64'd7);
+        check("end marker reached", gpr(S4), 64'h55);
+        check_trap_log();
+    endtask
+
+    task automatic test_fetch_misaligned_no_bus();
+        $display("Test 41 -- misaligned fetch target faults without any I-side bus access:");
+        begin_test();
+        emit_init(0);
+        emit(lui(T1, 21'd1));
+        emit(addi(T1, T1, 13'd2));
+        emit_fault_full(jalr(ZERO, T1, 13'd0), CAUSE_INSTR_MISALIGNED, 64'h2002, 64'h2002, TS_S);
+        emit(addi(S4, ZERO, 13'h55));
+        emit_halt();
+        load_exc_handler();
+        run(600);
+        check("end marker reached", gpr(S4), 64'h55);
+        check("no I-side bus request for the misaligned target line",
+              xlen_t'(imem_wild_seen), 64'd0);
+        check_trap_log();
+    endtask
+
     initial begin
         for (int i = 0; i < 4096; i++) begin
             imem[i] = i_type(OPC_OP_IMM, 5'd0, 3'b000, 5'd0, 13'd0);
@@ -1652,6 +1715,12 @@ module tb_core;
         test_fp_stalls(1'b1);
         test_fp_illegal();
         test_fp_trap_in_flight();
+        test_tlbinv();
+        test_fetch_misaligned_no_bus();
+
+        $display("Invariant -- bubbles / faulting instructions never encode a register write:");
+        check("no register-write encodings on empty or faulting slots",
+              xlen_t'(enc_violations), 64'd0);
 
         $display("================================================");
         if (errors == 0) begin
